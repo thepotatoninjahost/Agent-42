@@ -10,7 +10,7 @@
         android:fullBackupContent="@xml/backup_rules"
         android:label="@string/app_name"
         android:supportsRtl="true"
-        android:theme="@style/Theme.Material3.DayNight.NoActionBar"
+        android:theme="@style/Theme.Agent42"
         android:icon="@mipmap/ic_launcher"
         android:roundIcon="@mipmap/ic_launcher_round">
 
