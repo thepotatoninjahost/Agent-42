@@ -1,6 +1,6 @@
 package com.agent42.core
 
-import com.nexa.sdk.LlmWrapper
+import ai.nexa.ml.LlmWrapper
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import com.agent42.memory.*

@@ -1,8 +1,7 @@
 package com.agent42.reasoning
 
-import com.nexa.sdk.LlmWrapper
-import com.nexa.sdk.bean.GenerationConfig
-import com.nexa.sdk.bean.LlmStreamResult
+import ai.nexa.ml.LlmWrapper
+import ai.nexa.ml.bean.GenerationConfig
 import com.agent42.core.ContextManager
 import com.agent42.cognition.MetacognitiveMonitor
 import com.agent42.cognition.System1Cache
@@ -118,16 +117,14 @@ fun processReasoning(
             val accumulated = StringBuilder()
             llm.generateStreamFlow(prompt, generationConfig(thinking = true))
                 .collect { chunk ->
-                    if (chunk is LlmStreamResult.Token) {
-                        finalAnswer.append(chunk.text)
-                        accumulated.append(chunk.text)
-                        emit(ReasoningOutput.Chunk(chunk.text))
-                        // Metacognitive monitoring during streaming
-                        metacognitiveMonitor?.let { monitor ->
-                            val issue = monitor.analyzeChunk(chunk.text, accumulated.toString(), interactionId)
-                            if (issue != null && issue.severity > 0.7f) {
-                                emit(ReasoningOutput.MetacognitiveAlert(issue.issueType, issue.description, issue.severity))
-                            }
+                    finalAnswer.append(chunk)
+                    accumulated.append(chunk)
+                    emit(ReasoningOutput.Chunk(chunk))
+                    // Metacognitive monitoring during streaming
+                    metacognitiveMonitor?.let { monitor ->
+                        val issue = monitor.analyzeChunk(chunk, accumulated.toString(), interactionId)
+                        if (issue != null && issue.severity > 0.7f) {
+                            emit(ReasoningOutput.MetacognitiveAlert(issue.issueType, issue.description, issue.severity))
                         }
                     }
                 }
@@ -138,15 +135,13 @@ fun processReasoning(
             val accumulated = StringBuilder()
             llm.generateStreamFlow(prompt, generationConfig(thinking = true))
                 .collect { chunk ->
-                    if (chunk is LlmStreamResult.Token) {
-                        finalAnswer.append(chunk.text)
-                        accumulated.append(chunk.text)
-                        emit(ReasoningOutput.Chunk(chunk.text))
-                        metacognitiveMonitor?.let { monitor ->
-                            val issue = monitor.analyzeChunk(chunk.text, accumulated.toString(), interactionId)
-                            if (issue != null && issue.severity > 0.7f) {
-                                emit(ReasoningOutput.MetacognitiveAlert(issue.issueType, issue.description, issue.severity))
-                            }
+                    finalAnswer.append(chunk)
+                    accumulated.append(chunk)
+                    emit(ReasoningOutput.Chunk(chunk))
+                    metacognitiveMonitor?.let { monitor ->
+                        val issue = monitor.analyzeChunk(chunk, accumulated.toString(), interactionId)
+                        if (issue != null && issue.severity > 0.7f) {
+                            emit(ReasoningOutput.MetacognitiveAlert(issue.issueType, issue.description, issue.severity))
                         }
                     }
                 }
@@ -158,10 +153,8 @@ fun processReasoning(
                 val prompt = buildThoughtChainPrompt(contextManager, memorySystem, query)
                 llm.generateStreamFlow(prompt, generationConfig(thinking = true))
                     .collect { chunk ->
-                        if (chunk is LlmStreamResult.Token) {
-                            finalAnswer.append(chunk.text)
-                            emit(ReasoningOutput.Chunk(chunk.text))
-                        }
+                        finalAnswer.append(chunk)
+                        emit(ReasoningOutput.Chunk(chunk))
                     }
                 emit(ReasoningOutput.Done(interactionId, mode))
                 return@flow
@@ -173,11 +166,9 @@ fun processReasoning(
                 val result = StringBuilder()
                 llm.generateStreamFlow(subPrompt, generationConfig(thinking = true))
                     .collect { chunk ->
-                        if (chunk is LlmStreamResult.Token) {
-                            result.append(chunk.text)
-                            finalAnswer.append(chunk.text)
-                            emit(ReasoningOutput.Chunk(chunk.text))
-                        }
+                        result.append(chunk)
+                        finalAnswer.append(chunk)
+                        emit(ReasoningOutput.Chunk(chunk))
                     }
                 subResults[sub] = result.toString()
             }
@@ -185,10 +176,8 @@ fun processReasoning(
             finalAnswer.clear()
             llm.generateStreamFlow(synthPrompt, generationConfig(thinking = false))
                 .collect { chunk ->
-                    if (chunk is LlmStreamResult.Token) {
-                        finalAnswer.append(chunk.text)
-                        emit(ReasoningOutput.Chunk(chunk.text))
-                    }
+                    finalAnswer.append(chunk)
+                    emit(ReasoningOutput.Chunk(chunk))
                 }
         }
 
@@ -197,10 +186,8 @@ fun processReasoning(
             val initialAnswer = StringBuilder()
             llm.generateStreamFlow(initialPrompt, generationConfig(thinking = true))
                 .collect { chunk ->
-                    if (chunk is LlmStreamResult.Token) {
-                        initialAnswer.append(chunk.text)
-                        emit(ReasoningOutput.Chunk(chunk.text))
-                    }
+                    initialAnswer.append(chunk)
+                    emit(ReasoningOutput.Chunk(chunk))
                 }
             val critique = critique(llm, query, initialAnswer.toString())
             if (critique.hasIssues) {
@@ -211,10 +198,8 @@ fun processReasoning(
                 finalAnswer.clear()
                 llm.generateStreamFlow(refinedPrompt, generationConfig(thinking = false))
                     .collect { chunk ->
-                        if (chunk is LlmStreamResult.Token) {
-                            finalAnswer.append(chunk.text)
-                            emit(ReasoningOutput.Chunk(chunk.text))
-                        }
+                        finalAnswer.append(chunk)
+                        emit(ReasoningOutput.Chunk(chunk))
                     }
             } else {
                 finalAnswer = initialAnswer
@@ -261,10 +246,8 @@ fun processReasoning(
             )
             llm.generateStreamFlow(refinedPrompt, generationConfig(thinking = false))
                 .collect { chunk ->
-                    if (chunk is LlmStreamResult.Token) {
-                        finalAnswer.append(chunk.text)
-                        emit(ReasoningOutput.Chunk(chunk.text))
-                    }
+                    finalAnswer.append(chunk)
+                    emit(ReasoningOutput.Chunk(chunk))
                 }
             // Re-check confidence after refinement
             val (refinedConfidence, refinedVerified) = selfConsistencyCheck(
@@ -352,8 +335,8 @@ private suspend fun classifyQuery(llm: LlmWrapper, query: String): ReasoningMode
         val result = StringBuilder()
         llm.generateStreamFlow(
             classifierPrompt,
-            GenerationConfig(maxTokens = 10)
-        ).collect { chunk -> if (chunk is LlmStreamResult.Token) result.append(chunk.text) }
+            GenerationConfig(max_tokens = 10, enable_thinking = false)
+        ).collect { result.append(it) }
         return when (result.toString().trim().uppercase()) {
             "DECOMPOSE" -> ReasoningMode.DECOMPOSE
             "REFLECTIVE" -> ReasoningMode.REFLECTIVE
@@ -371,8 +354,8 @@ private suspend fun decompose(llm: LlmWrapper, query: String): List<String> {
         Request: "$query"
     """.trimIndent()
     val result = StringBuilder()
-    llm.generateStreamFlow(decomposePrompt, GenerationConfig(maxTokens = 256))
-        .collect { chunk -> if (chunk is LlmStreamResult.Token) result.append(chunk.text) }
+    llm.generateStreamFlow(decomposePrompt, GenerationConfig(max_tokens = 256))
+        .collect { result.append(it) }
     return result.toString().lines().mapNotNull { line ->
         val trimmed = line.trim()
         when {
@@ -396,8 +379,8 @@ private suspend fun critique(llm: LlmWrapper, query: String, answer: String): Cr
         Otherwise, list specific issues.
     """.trimIndent()
     val result = StringBuilder()
-    llm.generateStreamFlow(critiquePrompt, GenerationConfig(maxTokens = 512))
-        .collect { chunk -> if (chunk is LlmStreamResult.Token) result.append(chunk.text) }
+    llm.generateStreamFlow(critiquePrompt, GenerationConfig(max_tokens = 512))
+        .collect { result.append(it) }
     val text = result.toString().trim()
     return Critique(hasIssues = !text.uppercase().startsWith("CLEAN"), notes = text)
 }
@@ -470,7 +453,11 @@ private fun buildRefinementPrompt(query: String, initial: String, critiqueNotes:
     """.trimIndent()
 }
 
-private fun generationConfig(thinking: Boolean) = GenerationConfig(maxTokens = 4096)
+private fun generationConfig(thinking: Boolean) = GenerationConfig(
+    max_tokens = 4096,
+    enable_thinking = thinking,
+    temperature = 0.7f
+)
 
 // ═══════════════════════════════════════════════════════════════
 // UPGRADE 1: TREE OF THOUGHTS
@@ -492,10 +479,14 @@ private suspend fun treeOfThoughts(
     for (i in 0 until branchCount) {
         emit(ReasoningOutput.BranchStarted(i, "Exploring approach ${i + 1}"))
         val branchResult = StringBuilder()
-        val config = GenerationConfig(maxTokens = 2048)
+        val config = GenerationConfig(
+            max_tokens = 2048,
+            enable_thinking = true,
+            temperature = 0.5f + (i * 0.2f) // Vary temperature to get diverse approaches
+        )
         llm.generateStreamFlow("$prompt\n\nApproach this from a different angle. Attempt ${i + 1}.", config)
             .collect { chunk ->
-                if (chunk is LlmStreamResult.Token) branchResult.append(chunk.text)
+                branchResult.append(chunk)
                 // Don't stream all branches to UI — too noisy. Only show the winner.
             }
         branches.add(branchResult.toString())
@@ -522,12 +513,7 @@ private suspend fun treeOfThoughts(
         """.trimIndent()
         val merged = StringBuilder()
         llm.generateStreamFlow(mergePrompt, generationConfig(thinking = false))
-            .collect { chunk ->
-                if (chunk is LlmStreamResult.Token) {
-                    merged.append(chunk.text)
-                    emit(ReasoningOutput.Chunk(chunk.text))
-                }
-            }
+            .collect { chunk -> merged.append(chunk); emit(ReasoningOutput.Chunk(chunk)) }
         return merged.toString()
     }
 
@@ -547,8 +533,8 @@ private suspend fun scoreAnswer(llm: LlmWrapper, query: String, answer: String):
         Respond with ONLY a JSON object: {"score": 0.X, "reason": "brief explanation"}
     """.trimIndent()
     val result = StringBuilder()
-    llm.generateStreamFlow(scorePrompt, GenerationConfig(maxTokens = 128))
-        .collect { chunk -> if (chunk is LlmStreamResult.Token) result.append(chunk.text) }
+    llm.generateStreamFlow(scorePrompt, GenerationConfig(max_tokens = 128, enable_thinking = false))
+        .collect { result.append(it) }
     val text = result.toString().trim()
     val scoreMatch = Regex(""""?score"?\s*:\s*([\d.]+)""").find(text)
     val reasonMatch = Regex(""""?reason"?\s*:\s*"([^"]+)"""").find(text)
@@ -579,8 +565,8 @@ private suspend fun selfConsistencyCheck(
         {"correct": true/false, "confidence": 0.X, "issues": "brief description of any issues, or null if none"}
     """.trimIndent()
     val result = StringBuilder()
-    llm.generateStreamFlow(verifyPrompt, GenerationConfig(maxTokens = 256))
-        .collect { chunk -> if (chunk is LlmStreamResult.Token) result.append(chunk.text) }
+    llm.generateStreamFlow(verifyPrompt, GenerationConfig(max_tokens = 256, enable_thinking = true))
+        .collect { result.append(it) }
     val text = result.toString().trim()
     val correctMatch = Regex(""""?correct"?\s*:\s*(true|false)""", RegexOption.IGNORE_CASE).find(text)
     val confidenceMatch = Regex(""""?confidence"?\s*:\s*([\d.]+)""").find(text)

@@ -1,8 +1,7 @@
 package com.agent42.curiosity
 
-import com.nexa.sdk.LlmWrapper
-import com.nexa.sdk.bean.GenerationConfig
-import com.nexa.sdk.bean.LlmStreamResult
+import ai.nexa.ml.LlmWrapper
+import ai.nexa.ml.bean.GenerationConfig
 import com.agent42.memory.AgentDatabase
 import com.agent42.memory.KnowledgeGapEntity
 import kotlinx.coroutines.Dispatchers
@@ -126,10 +125,8 @@ class KnowledgeGapTracker(private val db: AgentDatabase) {
             appendLine("Gaps found:")
         }
 
-        val config = GenerationConfig(maxTokens = 512)
-        val rawOutput = llm.generateStreamFlow(prompt, config).toList()
-            .filterIsInstance<LlmStreamResult.Token>()
-            .joinToString("") { it.text }
+        val config = GenerationConfig(max_tokens = 512, enable_thinking = true)
+        val rawOutput = llm.generateStreamFlow(prompt, config).toList().joinToString("")
 
         parseGapLines(rawOutput)
     }

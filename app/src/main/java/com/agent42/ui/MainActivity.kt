@@ -99,7 +99,6 @@ fun Agent42Theme(content: @Composable () -> Unit) {
     )
 }
 
-@OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun AgentApp(
     deps: com.agent42.core.AgentDependencies,

@@ -1,8 +1,7 @@
 package com.agent42.memory
 
-import com.nexa.sdk.LlmWrapper
-import com.nexa.sdk.bean.GenerationConfig
-import com.nexa.sdk.bean.LlmStreamResult
+import ai.nexa.ml.LlmWrapper
+import ai.nexa.ml.bean.GenerationConfig
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
@@ -75,8 +74,8 @@ class MemorySystem(
             If nothing notable, output: NONE
         """.trimIndent()
         val result = StringBuilder()
-        llm.generateStreamFlow(extractionPrompt, GenerationConfig(maxTokens = 512))
-            .collect { chunk -> if (chunk is LlmStreamResult.Token) result.append(chunk.text) }
+        llm.generateStreamFlow(extractionPrompt, GenerationConfig(max_tokens = 512, enable_thinking = false))
+            .collect { result.append(it) }
         val text = result.toString().trim()
         if (text.uppercase() == "NONE" || text.isBlank()) return@withContext
 
@@ -206,12 +205,12 @@ class MemorySystem(
                 val mergePrompt = """
                     Merge these ${similar.size + 1} related memories into one concise, complete memory.
                     Keep all unique information, remove duplicates.
-                    ${(listOf(mem) + similar).mapIndexed { i, m -> "${i+1}. ${m.content.take(300)}" }.joinToString("\n")}
+                    ${listOf(mem) + similar}.mapIndexed { i, m -> "${i+1}. ${m.content.take(300)}" }.joinToString("\n")}
                     Output ONLY the merged memory content, nothing else.
                 """.trimIndent()
                 val result = StringBuilder()
-                llm.generateStreamFlow(mergePrompt, GenerationConfig(maxTokens = 512))
-                    .collect { chunk -> if (chunk is LlmStreamResult.Token) result.append(chunk.text) }
+                llm.generateStreamFlow(mergePrompt, GenerationConfig(max_tokens = 512, enable_thinking = false))
+                    .collect { result.append(it) }
                 val mergedContent = result.toString().trim()
                 if (mergedContent.isNotBlank()) {
                     val mergedImportance = (listOf(mem) + similar).maxOf { it.importance }
@@ -361,8 +360,8 @@ class MemorySystem(
             3. Patterns about the user you've missed 4. New skills to develop
         """.trimIndent()
         val result = StringBuilder()
-        llm.generateStreamFlow(reflectionPrompt, GenerationConfig(maxTokens = 2048))
-            .collect { chunk -> if (chunk is LlmStreamResult.Token) result.append(chunk.text) }
+        llm.generateStreamFlow(reflectionPrompt, GenerationConfig(max_tokens = 2048))
+            .collect { result.append(it) }
         val reflectionText = result.toString().trim()
         if (reflectionText.isNotBlank()) {
             val embedding = embed(reflectionText)
@@ -431,7 +430,7 @@ class MemorySystem(
         val model = embeddingModel ?: return null
         return try {
             when (model) {
-                is com.nexa.sdk.LlmWrapper -> {
+                is ai.nexa.ml.LlmWrapper -> {
                     // Try generateEmbedding if available, otherwise fall back to keyword-based recall
                     val method = model.javaClass.methods.firstOrNull {
                         it.name == "generateEmbedding" || it.name == "embed"

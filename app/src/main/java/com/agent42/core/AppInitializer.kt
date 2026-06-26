@@ -44,7 +44,7 @@ object AppInitializer {
         )
     }
 
-    fun createViewModel(deps: AgentDependencies, llm: com.nexa.sdk.LlmWrapper): AgentViewModel {
+    fun createViewModel(deps: AgentDependencies, llm: ai.nexa.ml.LlmWrapper): AgentViewModel {
         val codeModEngine = CodeModificationEngine(
             llm, deps.db.behaviorModuleDao(),
             deps.db.moduleSnapshotDao(), deps.db.feedbackDao()

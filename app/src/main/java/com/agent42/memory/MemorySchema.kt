@@ -28,12 +28,6 @@ class AgentConverters {
         if (value.isNullOrBlank()) emptyList() else value.split("|||")
 
     @TypeConverter
-    fun fromLongList(value: List<Long>?): String = value?.joinToString("|||") ?: ""
-    @TypeConverter
-    fun toLongList(value: String?): List<Long> =
-        if (value.isNullOrBlank()) emptyList() else value.split("|||").mapNotNull { it.toLongOrNull() }
-
-    @TypeConverter
     fun fromModificationRecordList(value: List<ModificationRecord>?): String {
         if (value.isNullOrEmpty()) return ""
         return value.joinToString("|||REC|||") { rec ->
@@ -185,7 +179,7 @@ data class UserProfileEntity(
     val confidence: Float, val updatedAt: Long
 )
 
-@Entity(tableName = "strategy_weights", indices = [Index("strategyName")])
+@Entity(tableName = "strategy_weights", indices = [Index("strategy_name")])
 data class StrategyWeightEntity(
     @PrimaryKey(autoGenerate = true) val id: Long = 0,
     val strategyName: String, val queryTypePattern: String,
@@ -443,7 +437,7 @@ data class PredictionEntity(
 )
 
 // UPGRADE 10: System 1 Cache — fast-path for familiar queries
-@Entity(tableName = "system1_cache", indices = [Index("queryHash")])
+@Entity(tableName = "system1_cache", indices = [Index("embedding_hash")])
 data class System1CacheEntry(
     @PrimaryKey(autoGenerate = true) val id: Long = 0,
     val queryHash: String,

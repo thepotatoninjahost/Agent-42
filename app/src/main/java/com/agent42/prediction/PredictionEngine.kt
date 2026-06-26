@@ -1,8 +1,7 @@
 package com.agent42.prediction
 
-import com.nexa.sdk.LlmWrapper
-import com.nexa.sdk.bean.GenerationConfig
-import com.nexa.sdk.bean.LlmStreamResult
+import ai.nexa.ml.LlmWrapper
+import ai.nexa.ml.bean.GenerationConfig
 import com.agent42.memory.AgentDatabase
 import com.agent42.memory.PredictionEntity
 import kotlinx.coroutines.Dispatchers
@@ -59,11 +58,15 @@ class PredictionEngine(
             appendLine("Respond with ONLY the predicted message, no quotes or explanations.")
         }
 
-        val config = GenerationConfig(maxTokens = 128)
+        val config = GenerationConfig(
+            max_tokens = 128,
+            enable_thinking = false,
+            temperature = 0.4f
+        )
 
         val predictedQuery = StringBuilder()
         llm.generateStreamFlow(prompt, config).collect { chunk ->
-            if (chunk is LlmStreamResult.Token) predictedQuery.append(chunk.text)
+            predictedQuery.append(chunk)
         }
 
         val cleanPrediction = predictedQuery.toString().trim().replace(""", "").replace(""", "")

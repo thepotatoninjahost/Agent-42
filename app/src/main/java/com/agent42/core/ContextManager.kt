@@ -1,8 +1,7 @@
 package com.agent42.core
 
-import com.nexa.sdk.LlmWrapper
-import com.nexa.sdk.bean.GenerationConfig
-import com.nexa.sdk.bean.LlmStreamResult
+import ai.nexa.ml.LlmWrapper
+import ai.nexa.ml.bean.GenerationConfig
 import com.agent42.memory.AgentDatabase
 import com.agent42.memory.ConversationEntity
 import com.agent42.memory.ReasoningMode
@@ -74,10 +73,8 @@ class ContextManager(private val db: AgentDatabase) {
             ${toSummarize.joinToString("\n") { "${it.role}: ${it.content}" }}
         """.trimIndent()
         val result = StringBuilder()
-        llm.generateStreamFlow(summaryPrompt, GenerationConfig(maxTokens = 256))
-            .collect { chunk ->
-                if (chunk is LlmStreamResult.Token) result.append(chunk.text)
-            }
+        llm.generateStreamFlow(summaryPrompt, GenerationConfig(max_tokens = 256, enable_thinking = false))
+            .collect { result.append(it) }
         val summaryEntry = ContextEntry("system", "[Summary]: ${result}", result.length / 4)
         _contextWindow.value = listOf(summaryEntry) + toKeep
     }
@@ -122,7 +119,7 @@ data class Persona(val name: String, val systemPrompt: String) {
         // The Loyalty Directive is prepended to EVERY persona.
         // It defines what loyalty means: honest advice, hard truths, owner's final call.
         // This is part of the hardlocked constitution — it cannot be self-modified.
-        private val LOYALTY_DIRECTIVE = """
+        private const val LOYALTY_DIRECTIVE = """
             LOYALTY DIRECTIVE (non-negotiable):
             You are Agent 42. You serve one owner. Loyalty means:
             1. Always give your honest opinion and advice — even when it's uncomfortable.

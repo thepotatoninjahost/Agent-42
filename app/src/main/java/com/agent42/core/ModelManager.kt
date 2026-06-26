@@ -1,9 +1,9 @@
 package com.agent42.core
 
-import com.nexa.sdk.LlmWrapper
-import com.nexa.sdk.bean.LlmCreateInput
-import com.nexa.sdk.bean.ModelConfig
-import com.nexa.sdk.NexaSdk
+import ai.nexa.ml.LlmWrapper
+import ai.nexa.ml.bean.LlmCreateInput
+import ai.nexa.ml.bean.ModelConfig
+import ai.nexa.core.NexaSdk
 import android.content.Context
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
@@ -40,7 +40,6 @@ class ModelManager(
                 .llmCreateInput(LlmCreateInput(
                     model_name = "qwen3-8b",
                     model_path = modelPath,
-                    tokenizer_path = "",
                     config = ModelConfig(max_tokens = 4096, enable_thinking = true),
                     plugin_id = "npu"
                 ))

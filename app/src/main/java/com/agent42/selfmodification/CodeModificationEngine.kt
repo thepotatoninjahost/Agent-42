@@ -1,8 +1,7 @@
 package com.agent42.selfmodification
 
-import com.nexa.sdk.LlmWrapper
-import com.nexa.sdk.bean.GenerationConfig
-import com.nexa.sdk.bean.LlmStreamResult
+import ai.nexa.ml.LlmWrapper
+import ai.nexa.ml.bean.GenerationConfig
 import com.agent42.memory.*
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
@@ -59,8 +58,8 @@ class CodeModificationEngine(
                 RISK_NOTES: <what could go wrong>
             """.trimIndent()
             val result = StringBuilder()
-            llm.generateStreamFlow(diagnosisPrompt, GenerationConfig(maxTokens = 2048))
-                .collect { chunk -> if (chunk is LlmStreamResult.Token) result.append(chunk.text) }
+            llm.generateStreamFlow(diagnosisPrompt, GenerationConfig(max_tokens = 2048))
+                .collect { result.append(it) }
             val parsed = parseDiagnosis(result.toString())
             if (parsed != null) {
                 proposals.add(ChangeProposal(
@@ -102,8 +101,8 @@ class CodeModificationEngine(
             For each issue: MODULE: <id> | ISSUE: <desc> | PROPOSED: <code> | SEVERITY: <level> | REASONING: <why>
         """.trimIndent()
         val result = StringBuilder()
-        llm.generateStreamFlow(auditPrompt, GenerationConfig(maxTokens = 4096))
-            .collect { chunk -> if (chunk is LlmStreamResult.Token) result.append(chunk.text) }
+        llm.generateStreamFlow(auditPrompt, GenerationConfig(max_tokens = 4096))
+            .collect { result.append(it) }
         return parseAuditResults(result.toString(), modules)
     }
 
@@ -114,8 +113,8 @@ class CodeModificationEngine(
             For each: MODULE_A: <id> | MODULE_B: <id> | CONFLICT: <desc> | PROPOSED_CHANGE: <code>
         """.trimIndent()
         val result = StringBuilder()
-        llm.generateStreamFlow(contradictionPrompt, GenerationConfig(maxTokens = 2048))
-            .collect { chunk -> if (chunk is LlmStreamResult.Token) result.append(chunk.text) }
+        llm.generateStreamFlow(contradictionPrompt, GenerationConfig(max_tokens = 2048))
+            .collect { result.append(it) }
         return parseContradictions(result.toString(), modules)
     }
 
@@ -134,8 +133,8 @@ class CodeModificationEngine(
                 RISK_NOTES: <downsides>
             """.trimIndent()
             val result = StringBuilder()
-            llm.generateStreamFlow(optimizePrompt, GenerationConfig(maxTokens = 2048))
-                .collect { chunk -> if (chunk is LlmStreamResult.Token) result.append(chunk.text) }
+            llm.generateStreamFlow(optimizePrompt, GenerationConfig(max_tokens = 2048))
+                .collect { result.append(it) }
             val parsed = parseDiagnosis(result.toString())
             ChangeProposal(
                 proposalId = "opt_${moduleId}_${System.currentTimeMillis()}",
