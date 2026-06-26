@@ -71,6 +71,9 @@ dependencies {
     implementation("net.zetetic:android-database-sqlcipher:4.5.4")
     implementation("androidx.sqlite:sqlite-ktx:2.4.0")
 
+    // AppCompat — base theme
+    implementation("androidx.appcompat:appcompat:1.7.0")
+
     // Compose
     implementation(platform("androidx.compose:compose-bom:2024.10.00"))
     implementation("androidx.compose.ui:ui")
