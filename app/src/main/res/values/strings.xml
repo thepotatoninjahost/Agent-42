@@ -1,0 +1,13 @@
+<resources>
+    <string name="app_name">Agent 42</string>
+    <string name="chat_label">Chat</string>
+    <string name="memory_label">Memory</string>
+    <string name="learning_label">Learning</string>
+    <string name="changes_label">Changes</string>
+    <string name="loading_model">Loading Qwen3-8B on NPU…</string>
+    <string name="send">Send</string>
+    <string name="mic">Microphone</string>
+    <string name="approve">Approve</string>
+    <string name="reject">Reject</string>
+    <string name="defer">Defer</string>
+</resources>

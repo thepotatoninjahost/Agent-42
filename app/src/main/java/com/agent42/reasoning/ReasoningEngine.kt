@@ -1,0 +1,604 @@
+package com.agent42.reasoning
+
+import ai.nexa.ml.LlmWrapper
+import ai.nexa.ml.bean.GenerationConfig
+import com.agent42.core.ContextManager
+import com.agent42.cognition.MetacognitiveMonitor
+import com.agent42.cognition.System1Cache
+import com.agent42.cognition.System1Result
+import com.agent42.debate.InternalDebate
+import com.agent42.memory.MemorySystem
+import com.agent42.memory.ReasoningMode
+import com.agent42.prediction.PredictiveCoder
+import com.agent42.verification.ConstraintChecker
+import kotlinx.coroutines.flow.Flow
+import kotlinx.coroutines.flow.flow
+
+data class ReasoningStep(
+    val description: String,
+    val prompt: String,
+    val result: String? = null,
+    val confidence: Float = 0f
+)
+
+data class ReasoningTrace(
+    val mode: ReasoningMode,
+    val steps: List<ReasoningStep>,
+    val finalAnswer: String,
+    val processingTimeMs: Long,
+    val contextTokensUsed: Int
+)
+
+sealed class ReasoningOutput {
+    data class Chunk(val text: String) : ReasoningOutput()
+    data class SubTaskStarted(val description: String) : ReasoningOutput()
+    object RefinementBoundary : ReasoningOutput()
+    data class BranchStarted(val branchIndex: Int, val description: String) : ReasoningOutput()
+    data class BranchScored(val branchIndex: Int, val score: Float, val reason: String) : ReasoningOutput()
+    data class ConfidenceCheck(val confidence: Float, val verified: Boolean, val notes: String?) : ReasoningOutput()
+    data class Done(val interactionId: Long, val mode: ReasoningMode, val confidence: Float = 1.0f) : ReasoningOutput()
+    // New cognitive system outputs
+    data class System1Hit(val cachedAnswer: String, val similarity: Float) : ReasoningOutput()
+    data class MetacognitiveAlert(val issueType: String, val description: String, val severity: Float) : ReasoningOutput()
+    data class ConstraintViolation(val factText: String, val answerClaim: String, val severity: Float) : ReasoningOutput()
+    data class DebateStarted(val perspectives: List<String>) : ReasoningOutput()
+    data class DebateConsensus(val consensusLevel: Float, val notes: String) : ReasoningOutput()
+    data class PredictionResult(val predictedQuery: String, val similarity: Float, val isSurprising: Boolean) : ReasoningOutput()
+    data class KnowledgeGapAlert(val topic: String, val gapType: String, val suggestion: String) : ReasoningOutput()
+}
+
+fun processReasoning(
+    llm: LlmWrapper,
+    contextManager: ContextManager,
+    memorySystem: MemorySystem,
+    query: String,
+    system1Cache: System1Cache? = null,
+    metacognitiveMonitor: MetacognitiveMonitor? = null,
+    constraintChecker: ConstraintChecker? = null,
+    predictiveCoder: PredictiveCoder? = null
+): Flow<ReasoningOutput> = flow {
+
+    // ═══ PHASE 0: PREDICTIVE CODING — generate expectation before processing ═══
+    // The agent predicts what the user wants before even reading the query.
+    // If reality matches expectation, processing is faster (less reasoning needed).
+    // If reality diverges (high surprise), trigger deeper reasoning.
+    var surpriseScore = 0f
+    predictiveCoder?.let { coder ->
+        val expectation = coder.generateExpectation(
+            sessionId = contextManager.sessionId,
+            recentContext = contextManager.getContextEntries().map { it.second },
+            timeOfDay = java.util.Calendar.getInstance().get(java.util.Calendar.HOUR_OF_DAY).toString(),
+            motionState = "UNKNOWN"
+        )
+        val surprise = coder.resolveExpectation(query)
+        surpriseScore = surprise.surpriseScore
+        if (coder.shouldTriggerDeepReasoning(surpriseScore)) {
+            // High surprise — the agent didn't expect this. Pay more attention.
+            emit(ReasoningOutput.PredictionResult(surprise.expectedTopic, 1f - surpriseScore, true))
+        }
+    }
+
+    // ═══ PHASE 1: SYSTEM 1 — check cache for instant answer ═══
+    // Fast path: if we've answered something very similar before with high confidence,
+    // return the cached answer immediately. No LLM call needed.
+    system1Cache?.let { cache ->
+        val fastResult = cache.tryFastPath(query)
+        if (fastResult is System1Result.Hit) {
+            emit(ReasoningOutput.System1Hit(fastResult.answer, fastResult.similarity))
+            // System 1 hit — but still do post-verification for safety
+            val interactionId = contextManager.recordInteraction(query, ReasoningMode.DIRECT)
+            emit(ReasoningOutput.Chunk(fastResult.answer))
+            // Still verify and check consistency
+            val (confidence, verified) = selfConsistencyCheck(llm, query, fastResult.answer) { emit(it) }
+            constraintChecker?.let { checker ->
+                val verification = checker.verifyAnswer(llm, fastResult.answer, query)
+                if (!verification.verified) {
+                    verification.contradictions.forEach { c ->
+                        emit(ReasoningOutput.ConstraintViolation(c.factText, c.answerClaim, c.severity))
+                    }
+                }
+            }
+            cache.cacheAnswer(query, fastResult.answer, confidence, ReasoningMode.DIRECT)
+            emit(ReasoningOutput.Done(interactionId, ReasoningMode.DIRECT, confidence))
+            return@flow
+        }
+    }
+
+    val mode = classifyQuery(llm, query)
+    val interactionId = contextManager.recordInteraction(query, mode)
+
+    var finalConfidence = 1.0f
+    var finalAnswer = StringBuilder()
+
+    // ═══ PHASE 2: SYSTEM 2 — full reasoning (with metacognitive monitoring) ═══
+    when (mode) {
+        ReasoningMode.DIRECT -> {
+            val prompt = buildPrompt(contextManager, memorySystem, query)
+            val accumulated = StringBuilder()
+            llm.generateStreamFlow(prompt, generationConfig(thinking = true))
+                .collect { chunk ->
+                    finalAnswer.append(chunk)
+                    accumulated.append(chunk)
+                    emit(ReasoningOutput.Chunk(chunk))
+                    // Metacognitive monitoring during streaming
+                    metacognitiveMonitor?.let { monitor ->
+                        val issue = monitor.analyzeChunk(chunk, accumulated.toString(), interactionId)
+                        if (issue != null && issue.severity > 0.7f) {
+                            emit(ReasoningOutput.MetacognitiveAlert(issue.issueType, issue.description, issue.severity))
+                        }
+                    }
+                }
+        }
+
+        ReasoningMode.CHAIN_OF_THOUGHT -> {
+            val prompt = buildThoughtChainPrompt(contextManager, memorySystem, query)
+            val accumulated = StringBuilder()
+            llm.generateStreamFlow(prompt, generationConfig(thinking = true))
+                .collect { chunk ->
+                    finalAnswer.append(chunk)
+                    accumulated.append(chunk)
+                    emit(ReasoningOutput.Chunk(chunk))
+                    metacognitiveMonitor?.let { monitor ->
+                        val issue = monitor.analyzeChunk(chunk, accumulated.toString(), interactionId)
+                        if (issue != null && issue.severity > 0.7f) {
+                            emit(ReasoningOutput.MetacognitiveAlert(issue.issueType, issue.description, issue.severity))
+                        }
+                    }
+                }
+        }
+
+        ReasoningMode.DECOMPOSE -> {
+            val subProblems = decompose(llm, query)
+            if (subProblems.isEmpty()) {
+                val prompt = buildThoughtChainPrompt(contextManager, memorySystem, query)
+                llm.generateStreamFlow(prompt, generationConfig(thinking = true))
+                    .collect { chunk ->
+                        finalAnswer.append(chunk)
+                        emit(ReasoningOutput.Chunk(chunk))
+                    }
+                emit(ReasoningOutput.Done(interactionId, mode))
+                return@flow
+            }
+            val subResults = mutableMapOf<String, String>()
+            for (sub in subProblems) {
+                emit(ReasoningOutput.SubTaskStarted(sub))
+                val subPrompt = buildSubProblemPrompt(sub, query)
+                val result = StringBuilder()
+                llm.generateStreamFlow(subPrompt, generationConfig(thinking = true))
+                    .collect { chunk ->
+                        result.append(chunk)
+                        finalAnswer.append(chunk)
+                        emit(ReasoningOutput.Chunk(chunk))
+                    }
+                subResults[sub] = result.toString()
+            }
+            val synthPrompt = buildSynthesisPrompt(query, subResults)
+            finalAnswer.clear()
+            llm.generateStreamFlow(synthPrompt, generationConfig(thinking = false))
+                .collect { chunk ->
+                    finalAnswer.append(chunk)
+                    emit(ReasoningOutput.Chunk(chunk))
+                }
+        }
+
+        ReasoningMode.REFLECTIVE -> {
+            val initialPrompt = buildPrompt(contextManager, memorySystem, query)
+            val initialAnswer = StringBuilder()
+            llm.generateStreamFlow(initialPrompt, generationConfig(thinking = true))
+                .collect { chunk ->
+                    initialAnswer.append(chunk)
+                    emit(ReasoningOutput.Chunk(chunk))
+                }
+            val critique = critique(llm, query, initialAnswer.toString())
+            if (critique.hasIssues) {
+                emit(ReasoningOutput.RefinementBoundary)
+                val refinedPrompt = buildRefinementPrompt(
+                    query, initialAnswer.toString(), critique.notes
+                )
+                finalAnswer.clear()
+                llm.generateStreamFlow(refinedPrompt, generationConfig(thinking = false))
+                    .collect { chunk ->
+                        finalAnswer.append(chunk)
+                        emit(ReasoningOutput.Chunk(chunk))
+                    }
+            } else {
+                finalAnswer = initialAnswer
+            }
+        }
+
+        ReasoningMode.TREE_OF_THOUGHTS -> {
+            // For the most complex queries, use Internal Debate instead of ToT
+            // if the query is evaluative/advisory. Debate = branches that interact.
+            val lower = query.lowercase()
+            val debatePatterns = listOf("should i", "best approach", "pros and cons", "evaluate",
+                                         "trade-offs", "what if", "recommend", "advise")
+            if (debatePatterns.any { lower.contains(it) }) {
+                // Use Internal Debate — multi-perspective argumentation
+                emit(ReasoningOutput.DebateStarted(listOf("SKEPTIC", "OPTIMIST", "PRAGMATIST")))
+                val context = buildPrompt(contextManager, memorySystem, query)
+                val debateResult = InternalDebate.conductDebate(llm, query, context) { emit(it) }
+                finalAnswer = StringBuilder(debateResult.finalAnswer)
+                emit(ReasoningOutput.DebateConsensus(debateResult.consensusLevel, debateResult.judgeNotes))
+                // Factor debate consensus into confidence
+                finalConfidence = debateResult.consensusLevel
+            } else {
+                // Use Tree of Thoughts for exploration-type queries
+                val best = treeOfThoughts(llm, contextManager, memorySystem, query) { emit(it) }
+                finalAnswer = StringBuilder(best)
+            }
+        }
+    }
+
+    // ═══ PHASE 3: SELF-CONSISTENCY CHECK ═══
+    val (confidence, verified) = selfConsistencyCheck(
+        llm, query, finalAnswer.toString()
+    ) { emit(it) }
+    finalConfidence = confidence
+
+    // If verification fails, trigger a reflective refinement
+    if (!verified && mode != ReasoningMode.REFLECTIVE) {
+        emit(ReasoningOutput.RefinementBoundary)
+        val critique = critique(llm, query, finalAnswer.toString())
+        if (critique.hasIssues) {
+            finalAnswer.clear()
+            val refinedPrompt = buildRefinementPrompt(
+                query, finalAnswer.toString(), critique.notes
+            )
+            llm.generateStreamFlow(refinedPrompt, generationConfig(thinking = false))
+                .collect { chunk ->
+                    finalAnswer.append(chunk)
+                    emit(ReasoningOutput.Chunk(chunk))
+                }
+            // Re-check confidence after refinement
+            val (refinedConfidence, refinedVerified) = selfConsistencyCheck(
+                llm, query, finalAnswer.toString()
+            ) { emit(it) }
+            finalConfidence = refinedConfidence
+        }
+    }
+
+    // ═══ PHASE 4: CONSTRAINT-BASED VERIFICATION (energy-based) ═══
+    // Check the answer against known facts in the database — external verification
+    // rather than asking the LLM "is this correct?" (which is unreliable).
+    constraintChecker?.let { checker ->
+        val verification = checker.verifyAnswer(llm, finalAnswer.toString(), query)
+        if (!verification.verified) {
+            verification.contradictions.forEach { c ->
+                emit(ReasoningOutput.ConstraintViolation(c.factText, c.answerClaim, c.severity))
+                // Reduce confidence for each contradiction found
+                finalConfidence = (finalConfidence - c.severity * 0.2f).coerceAtLeast(0f)
+            }
+        }
+        // Extract new facts from this answer for future verification
+        checker.extractFacts(llm, finalAnswer.toString(), interactionId)
+    }
+
+    // ═══ PHASE 5: METACOGNITIVE FINAL REVIEW ═══
+    // Full review after generation — deeper than chunk-level analysis
+    metacognitiveMonitor?.let { monitor ->
+        val issues = monitor.finalReview(finalAnswer.toString(), query, interactionId)
+        issues.filter { it.severity > 0.5f }.forEach { issue ->
+            emit(ReasoningOutput.MetacognitiveAlert(issue.issueType, issue.description, issue.severity))
+            finalConfidence = (finalConfidence - issue.severity * 0.1f).coerceAtLeast(0f)
+        }
+    }
+
+    // ═══ PHASE 6: CACHE THE ANSWER (System 1 learning) ═══
+    system1Cache?.let { cache ->
+        cache.cacheAnswer(query, finalAnswer.toString(), finalConfidence, mode)
+    }
+
+    // ═══ PHASE 7: KNOWLEDGE GAP TRACKING ═══
+    // If confidence is low, record this as a knowledge gap
+    if (finalConfidence < 0.4f) {
+        val topic = query.split(" ").filter { it.length > 4 }.take(3).joinToString(" ")
+        if (topic.isNotBlank()) {
+            emit(ReasoningOutput.KnowledgeGapAlert(
+                topic, "LOW_CONFIDENCE",
+                "I'm not confident about this topic. I should learn more."
+            ))
+        }
+    }
+
+    emit(ReasoningOutput.Done(interactionId, mode, finalConfidence))
+}
+
+private suspend fun classifyQuery(llm: LlmWrapper, query: String): ReasoningMode {
+    val lower = query.lowercase()
+    val directPatterns = listOf("what is", "who is", "when did", "define", "translate")
+    if (directPatterns.any { lower.startsWith(it) } && lower.length < 60) {
+        return ReasoningMode.DIRECT
+    }
+    val complexPatterns = listOf(
+        "step by step", "compare", "analyze", "design", "plan",
+        "how would you", "what if", "optimize", "prove that",
+        "and also", "additionally", "best approach", "should i",
+        "trade-offs", "pros and cons", "evaluate"
+    )
+    val hasMultipleClauses = query.split(" and ", ", then", ";").size > 2
+    if (complexPatterns.any { lower.contains(it) } || hasMultipleClauses) {
+        // Route open-ended or evaluative questions to Tree of Thoughts
+        val totPatterns = listOf("best approach", "should i", "trade-offs", "pros and cons",
+                                  "evaluate", "compare", "what if", "how would you")
+        if (totPatterns.any { lower.contains(it) }) {
+            return ReasoningMode.TREE_OF_THOUGHTS
+        }
+        val classifierPrompt = """
+            Classify this query into exactly one mode:
+            - DECOMPOSE: requires breaking into independent sub-tasks
+            - CHAIN_OF_THOUGHT: requires sequential logical steps
+            - REFLECTIVE: needs initial answer + self-correction
+            - TREE_OF_THOUGHTS: open-ended, multiple valid approaches, needs exploration
+            Query: "$query"
+            Respond with one word: DECOMPOSE, CHAIN_OF_THOUGHT, REFLECTIVE, or TREE_OF_THOUGHTS
+        """.trimIndent()
+        val result = StringBuilder()
+        llm.generateStreamFlow(
+            classifierPrompt,
+            GenerationConfig(max_tokens = 10, enable_thinking = false)
+        ).collect { result.append(it) }
+        return when (result.toString().trim().uppercase()) {
+            "DECOMPOSE" -> ReasoningMode.DECOMPOSE
+            "REFLECTIVE" -> ReasoningMode.REFLECTIVE
+            "TREE_OF_THOUGHTS" -> ReasoningMode.TREE_OF_THOUGHTS
+            else -> ReasoningMode.CHAIN_OF_THOUGHT
+        }
+    }
+    return ReasoningMode.CHAIN_OF_THOUGHT
+}
+
+private suspend fun decompose(llm: LlmWrapper, query: String): List<String> {
+    val decomposePrompt = """
+        Break this request into independent sub-tasks.
+        Output ONLY the sub-tasks, one per line, numbered.
+        Request: "$query"
+    """.trimIndent()
+    val result = StringBuilder()
+    llm.generateStreamFlow(decomposePrompt, GenerationConfig(max_tokens = 256))
+        .collect { result.append(it) }
+    return result.toString().lines().mapNotNull { line ->
+        val trimmed = line.trim()
+        when {
+            Regex("^\\d+[.)\\-]\\s+(.+)").matchEntire(trimmed) != null ->
+                Regex("^\\d+[.)\\-]\\s+(.+)").find(trimmed)?.groupValues?.get(1)
+            trimmed.startsWith("- ") || trimmed.startsWith("* ") -> trimmed.drop(2)
+            else -> null
+        }
+    }.filter { it.isNotBlank() }
+}
+
+data class Critique(val hasIssues: Boolean, val notes: String)
+
+private suspend fun critique(llm: LlmWrapper, query: String, answer: String): Critique {
+    val critiquePrompt = """
+        You are reviewing an answer for correctness.
+        Original question: "$query"
+        Proposed answer: "$answer"
+        Identify any: Factual errors, Logical gaps, Missing considerations, Unsupported claims
+        If the answer is correct and complete, respond: CLEAN
+        Otherwise, list specific issues.
+    """.trimIndent()
+    val result = StringBuilder()
+    llm.generateStreamFlow(critiquePrompt, GenerationConfig(max_tokens = 512))
+        .collect { result.append(it) }
+    val text = result.toString().trim()
+    return Critique(hasIssues = !text.uppercase().startsWith("CLEAN"), notes = text)
+}
+
+private suspend fun buildPrompt(
+    contextManager: ContextManager,
+    memorySystem: MemorySystem,
+    query: String
+): String {
+    val context = contextManager.getContextEntries()
+    val persona = contextManager.getActivePersona()
+    val relevantMemories = memorySystem.recallRelevant(query)
+    val maxMemoryChars = 2000
+    val truncatedMemories = relevantMemories.joinToString("\n").take(maxMemoryChars)
+    return buildString {
+        appendLine(persona.systemPrompt)
+        if (contextManager.sensorContext.isNotBlank()) {
+            appendLine("\n## Current Context")
+            appendLine(contextManager.sensorContext)
+        }
+        if (truncatedMemories.isNotBlank()) {
+            appendLine("\n## Relevant Context From Memory")
+            appendLine(truncatedMemories)
+        }
+        if (context.isNotEmpty()) {
+            appendLine("\n## Conversation So Far")
+            context.forEach { (role, msg) -> appendLine("$role: $msg") }
+        }
+        appendLine("\n## User")
+        appendLine(query)
+    }
+}
+
+private suspend fun buildThoughtChainPrompt(
+    contextManager: ContextManager,
+    memorySystem: MemorySystem,
+    query: String
+): String {
+    return buildPrompt(contextManager, memorySystem, query) +
+           "\n\nThink through this step by step before answering."
+}
+
+private fun buildSubProblemPrompt(subTask: String, originalQuery: String): String {
+    return """
+        You are solving part of a larger problem.
+        Original request: "$originalQuery"
+        Your specific sub-task: "$subTask"
+        Solve only this sub-task thoroughly.
+    """.trimIndent()
+}
+
+private fun buildSynthesisPrompt(query: String, subResults: Map<String, String>): String {
+    val subTaskSummaries = subResults.entries.joinToString("\n\n") { "### ${it.key}\n${it.value}" }
+    return """
+        Synthesize these partial results into one coherent answer.
+        Original request: "$query"
+        Sub-task results:
+        $subTaskSummaries
+        Provide a unified, well-structured answer.
+    """.trimIndent()
+}
+
+private fun buildRefinementPrompt(query: String, initial: String, critiqueNotes: String): String {
+    return """
+        Refine this answer based on critique.
+        Question: "$query"
+        Initial answer: "$initial"
+        Issues found: "$critiqueNotes"
+        Provide the corrected, improved answer.
+    """.trimIndent()
+}
+
+private fun generationConfig(thinking: Boolean) = GenerationConfig(
+    max_tokens = 4096,
+    enable_thinking = thinking,
+    temperature = 0.7f
+)
+
+// ═══════════════════════════════════════════════════════════════
+// UPGRADE 1: TREE OF THOUGHTS
+// Generate multiple reasoning branches, score each, keep the best.
+// ═══════════════════════════════════════════════════════════════
+
+private suspend fun treeOfThoughts(
+    llm: LlmWrapper,
+    contextManager: ContextManager,
+    memorySystem: MemorySystem,
+    query: String,
+    emit: suspend (ReasoningOutput) -> Unit
+): String {
+    val prompt = buildPrompt(contextManager, memorySystem, query)
+    val branchCount = 3
+    val branches = mutableListOf<String>()
+
+    // Generate branches in parallel using different temperature/seed approaches
+    for (i in 0 until branchCount) {
+        emit(ReasoningOutput.BranchStarted(i, "Exploring approach ${i + 1}"))
+        val branchResult = StringBuilder()
+        val config = GenerationConfig(
+            max_tokens = 2048,
+            enable_thinking = true,
+            temperature = 0.5f + (i * 0.2f) // Vary temperature to get diverse approaches
+        )
+        llm.generateStreamFlow("$prompt\n\nApproach this from a different angle. Attempt ${i + 1}.", config)
+            .collect { chunk ->
+                branchResult.append(chunk)
+                // Don't stream all branches to UI — too noisy. Only show the winner.
+            }
+        branches.add(branchResult.toString())
+    }
+
+    // Score each branch
+    val scored = branches.mapIndexed { index, answer ->
+        val score = scoreAnswer(llm, query, answer)
+        emit(ReasoningOutput.BranchScored(index, score.score, score.reason))
+        Triple(index, answer, score)
+    }.sortedByDescending { it.third.score }
+
+    val best = scored.first()
+    val worst = scored.last()
+
+    // If top branches strongly disagree, merge the best two
+    if (scored.size >= 2 && best.third.score - worst.third.score < 0.3f) {
+        emit(ReasoningOutput.BranchStarted(99, "Merging top approaches for a stronger answer"))
+        val mergePrompt = """
+            Two approaches were attempted for: "$query"
+            Approach A: "${best.second.take(500)}"
+            Approach B: "${scored[1].second.take(500)}"
+            Merge the best insights from both into one superior answer.
+        """.trimIndent()
+        val merged = StringBuilder()
+        llm.generateStreamFlow(mergePrompt, generationConfig(thinking = false))
+            .collect { chunk -> merged.append(chunk); emit(ReasoningOutput.Chunk(chunk)) }
+        return merged.toString()
+    }
+
+    // Stream the winning branch to UI
+    best.second.forEach { char -> emit(ReasoningOutput.Chunk(char.toString())) }
+    return best.second
+}
+
+data class AnswerScore(val score: Float, val reason: String)
+
+private suspend fun scoreAnswer(llm: LlmWrapper, query: String, answer: String): AnswerScore {
+    val scorePrompt = """
+        Rate this answer on a scale of 0.0 to 1.0.
+        Question: "$query"
+        Answer: "${answer.take(800)}"
+        Consider: accuracy, completeness, relevance, logical soundness.
+        Respond with ONLY a JSON object: {"score": 0.X, "reason": "brief explanation"}
+    """.trimIndent()
+    val result = StringBuilder()
+    llm.generateStreamFlow(scorePrompt, GenerationConfig(max_tokens = 128, enable_thinking = false))
+        .collect { result.append(it) }
+    val text = result.toString().trim()
+    val scoreMatch = Regex(""""?score"?\s*:\s*([\d.]+)""").find(text)
+    val reasonMatch = Regex(""""?reason"?\s*:\s*"([^"]+)"""").find(text)
+    val score = scoreMatch?.groupValues?.get(1)?.toFloatOrNull() ?: 0.5f
+    val reason = reasonMatch?.groupValues?.get(1) ?: "No explanation provided"
+    return AnswerScore(score.coerceIn(0f, 1f), reason)
+}
+
+// ═══════════════════════════════════════════════════════════════
+// UPGRADE 2: SELF-CONSISTENCY CHECK
+// After generating an answer, verify it independently.
+// If verification disagrees, trigger a reflective refinement.
+// ═══════════════════════════════════════════════════════════════
+
+private suspend fun selfConsistencyCheck(
+    llm: LlmWrapper,
+    query: String,
+    answer: String,
+    emit: suspend (ReasoningOutput) -> Unit
+): Pair<Float, Boolean> {
+    val verifyPrompt = """
+        You are verifying an answer independently.
+        Question: "$query"
+        Answer to verify: "${answer.take(800)}"
+        Do NOT look at the answer first. Think about the question yourself,
+        then check if the answer is correct, complete, and free of errors.
+        Respond with ONLY a JSON object:
+        {"correct": true/false, "confidence": 0.X, "issues": "brief description of any issues, or null if none"}
+    """.trimIndent()
+    val result = StringBuilder()
+    llm.generateStreamFlow(verifyPrompt, GenerationConfig(max_tokens = 256, enable_thinking = true))
+        .collect { result.append(it) }
+    val text = result.toString().trim()
+    val correctMatch = Regex(""""?correct"?\s*:\s*(true|false)""", RegexOption.IGNORE_CASE).find(text)
+    val confidenceMatch = Regex(""""?confidence"?\s*:\s*([\d.]+)""").find(text)
+    val issuesMatch = Regex(""""?issues"?\s*:\s*"([^"]+)"""").find(text)
+
+    val isCorrect = correctMatch?.groupValues?.get(1)?.lowercase() == "true"
+    val confidence = confidenceMatch?.groupValues?.get(1)?.toFloatOrNull() ?: 0.5f
+    val issues = issuesMatch?.groupValues?.get(1)
+    val verified = isCorrect && confidence >= 0.7f
+
+    emit(ReasoningOutput.ConfidenceCheck(confidence, verified, issues))
+
+    return Pair(confidence, verified)
+}
+
+// ═══════════════════════════════════════════════════════════════
+// UPGRADE 3: CONFIDENCE-GATED RESPONSE
+// If confidence is below threshold, prepend "I'm not sure" and show caveats.
+// Honest uncertainty rather than confident hallucination.
+// ═══════════════════════════════════════════════════════════════
+
+private const val CONFIDENCE_THRESHOLD = 0.6f
+
+private fun confidenceGate(answer: String, confidence: Float, issues: String?): String {
+    if (confidence >= CONFIDENCE_THRESHOLD) return answer
+    val caveat = buildString {
+        appendLine("⚠ I'm not fully confident in this answer (confidence: ${"%.0f".format(confidence * 100)}%).")
+        if (issues != null && issues != "null") {
+            appendLine("Potential issues: $issues")
+        }
+        appendLine("Please verify independently. Here's my best attempt:")
+        appendLine()
+    }
+    return caveat + answer
+}

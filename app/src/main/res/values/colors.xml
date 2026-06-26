@@ -1,0 +1,6 @@
+<resources>
+    <color name="primary">#FF7C9EFF</color>
+    <color name="background">#FF0F1117</color>
+    <color name="surface">#FF16181F</color>
+    <color name="error">#FFFF5252</color>
+</resources>

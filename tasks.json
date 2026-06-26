@@ -1,0 +1,47 @@
+[
+  {
+    "content": "Fix ReasoningEngine: missing imports, suspend buildPrompt, unused param, decompose empty fallback, extract interaction ID",
+    "id": "1",
+    "status": "completed"
+  },
+  {
+    "content": "Fix MemorySchema: missing Flow import, TypeConverters, add BehaviorModule/ModuleSnapshot entities, fix SQL query alias",
+    "id": "2",
+    "status": "completed"
+  },
+  {
+    "content": "Fix MemorySystem: missing imports, implement missing methods, implement cosineSimilarity, fix EmbeddingWrapper types",
+    "id": "3",
+    "status": "completed"
+  },
+  {
+    "content": "Fix ContextManager: missing imports, implement all methods, add session ID",
+    "id": "4",
+    "status": "completed"
+  },
+  {
+    "content": "Fix ApprovalGate: add feedbackDao dependency, fix missing classes, persist proposals",
+    "id": "5",
+    "status": "completed"
+  },
+  {
+    "content": "Fix CodeModificationEngine: implement missing DAO methods, FailurePattern class",
+    "id": "6",
+    "status": "completed"
+  },
+  {
+    "content": "Fix BehaviorModule: add to AgentDatabase, add DAOs, TypeConverters",
+    "id": "7",
+    "status": "completed"
+  },
+  {
+    "content": "Fix AgentViewModel: implement all missing methods, concurrency guard, viewModelScope",
+    "id": "8",
+    "status": "completed"
+  },
+  {
+    "content": "Fix Nexa SDK adapter wrapper for safe API access",
+    "id": "9",
+    "status": "completed"
+  }
+]

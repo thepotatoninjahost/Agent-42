@@ -1,0 +1,4 @@
+<full-backup-content>
+    <exclude domain="database" path="agent42.db" />
+    <exclude domain="file" path="models/" />
+</full-backup-content>
