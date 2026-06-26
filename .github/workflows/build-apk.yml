@@ -1,6 +1,8 @@
 name: Build APK
 
 on:
+  push:
+    branches: [main]
   workflow_dispatch:
     inputs:
       build_type:
@@ -46,7 +48,8 @@ jobs:
 
       - name: Build APK
         run: |
-          if [ "${{ github.event.inputs.build_type }}" = "release" ]; then
+          BUILD_TYPE="${{ github.event.inputs.build_type || 'debug' }}"
+          if [ "$BUILD_TYPE" = "release" ]; then
             ./gradlew assembleRelease
           else
             ./gradlew assembleDebug
@@ -55,7 +58,7 @@ jobs:
       - name: Upload APK
         uses: actions/upload-artifact@v4
         with:
-          name: agent42-${{ github.event.inputs.build_type }}-apk
+          name: agent42-${{ github.event.inputs.build_type || 'debug' }}-apk
           path: |
             app/build/outputs/apk/**/*.apk
           retention-days: 7
