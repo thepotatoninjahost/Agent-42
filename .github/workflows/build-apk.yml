@@ -19,7 +19,7 @@ jobs:
     runs-on: ubuntu-latest
     permissions:
       actions: write
-      contents: read
+      contents: write
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -76,9 +76,19 @@ jobs:
             }
 
       - name: Upload APK
+        continue-on-error: true
         uses: actions/upload-artifact@v4
         with:
           name: agent42-${{ github.event.inputs.build_type || 'debug' }}-apk
           path: |
             app/build/outputs/apk/**/*.apk
           retention-days: 7
+
+      - name: Upload APK to GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: agent42-${{ github.sha }}
+          name: Agent 42 Debug APK ${{ github.sha }}
+          files: app/build/outputs/apk/**/*.apk
+          prerelease: true
+          make_latest: false
