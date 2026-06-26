@@ -1,7 +1,8 @@
 package com.agent42.debate
 
-import ai.nexa.ml.LlmWrapper
-import ai.nexa.ml.bean.GenerationConfig
+import com.nexa.sdk.LlmWrapper
+import com.nexa.sdk.bean.GenerationConfig
+import com.nexa.sdk.bean.LlmStreamResult
 import com.agent42.reasoning.ReasoningOutput
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.collect
@@ -125,10 +126,12 @@ object InternalDebate {
         val judgeOutput = StringBuilder()
         llm.generateStreamFlow(
             judgePrompt,
-            GenerationConfig(max_tokens = MAX_TOKENS_JUDGE, enable_thinking = true, temperature = 0.3f)
+            GenerationConfig(maxTokens = MAX_TOKENS_JUDGE)
         ).collect { chunk ->
-            judgeOutput.append(chunk)
-            emit(ReasoningOutput.Chunk(chunk))
+            if (chunk is LlmStreamResult.Token) {
+                judgeOutput.append(chunk.text)
+                emit(ReasoningOutput.Chunk(chunk.text))
+            }
         }
 
         val (finalAnswer, judgeNotes) = parseJudgeOutput(judgeOutput.toString())
@@ -234,8 +237,8 @@ object InternalDebate {
         val sb = StringBuilder()
         llm.generateStreamFlow(
             prompt,
-            GenerationConfig(max_tokens = maxTokens, enable_thinking = true, temperature = 0.7f)
-        ).collect { sb.append(it) }
+            GenerationConfig(maxTokens = maxTokens)
+        ).collect { chunk -> if (chunk is LlmStreamResult.Token) sb.append(chunk.text) }
         return sb.toString().trim()
     }
 

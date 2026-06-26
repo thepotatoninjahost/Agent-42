@@ -1,14 +1,17 @@
 package com.agent42.nexa
 
-import ai.nexa.ml.LlmWrapper
-import ai.nexa.ml.bean.GenerationConfig
-import ai.nexa.ml.bean.LlmCreateInput
-import ai.nexa.ml.bean.ModelConfig
-import ai.nexa.core.NexaSdk
+import com.nexa.sdk.LlmWrapper
+import com.nexa.sdk.bean.GenerationConfig
+import com.nexa.sdk.bean.LlmCreateInput
+import com.nexa.sdk.bean.ModelConfig
+import com.nexa.sdk.NexaSdk
+import com.nexa.sdk.bean.LlmStreamResult
 import android.content.Context
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.catch
+import kotlinx.coroutines.flow.filter
+import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.withContext
 import java.io.File
 
@@ -37,7 +40,7 @@ class NexaSdkAdapter(private val context: Context) {
         runCatching {
             val result = LlmWrapper.builder()
                 .llmCreateInput(LlmCreateInput(
-                    model_name = modelName, model_path = modelPath,
+                    model_name = modelName, model_path = modelPath, tokenizer_path = "",
                     config = ModelConfig(max_tokens = maxTokens, enable_thinking = enableThinking),
                     plugin_id = pluginId
                 ))
@@ -53,10 +56,10 @@ class NexaSdkAdapter(private val context: Context) {
         enableThinking: Boolean = true, temperature: Float = 0.7f
     ): Flow<String> {
         val wrapper = llmWrapper ?: throw NexaSdkException("Model not loaded")
-        val config = GenerationConfig(
-            max_tokens = maxTokens, enable_thinking = enableThinking, temperature = temperature
-        )
+        val config = GenerationConfig(maxTokens = maxTokens)
         return wrapper.generateStreamFlow(prompt, config)
+            .map { result -> if (result is LlmStreamResult.Token) result.text else "" }
+            .filter { it.isNotEmpty() }
             .catch { e -> throw NexaSdkException("Generation failed: ${e.message}", e) }
     }
 

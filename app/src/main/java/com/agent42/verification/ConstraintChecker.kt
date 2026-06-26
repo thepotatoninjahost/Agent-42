@@ -1,7 +1,8 @@
 package com.agent42.verification
 
-import ai.nexa.ml.LlmWrapper
-import ai.nexa.ml.bean.GenerationConfig
+import com.nexa.sdk.LlmWrapper
+import com.nexa.sdk.bean.GenerationConfig
+import com.nexa.sdk.bean.LlmStreamResult
 import com.agent42.memory.AgentDatabase
 import com.agent42.memory.KnownFactDao
 import com.agent42.memory.KnownFactEntity
@@ -41,17 +42,9 @@ class ConstraintChecker(private val db: AgentDatabase) {
 
     private val factDao: KnownFactDao get() = db.knownFactDao()
 
-    private val extractionConfig = GenerationConfig(
-        max_tokens = 512,
-        enable_thinking = false,
-        temperature = 0.2f
-    )
+    private val extractionConfig = GenerationConfig(maxTokens = 512)
 
-    private val verificationConfig = GenerationConfig(
-        max_tokens = 128,
-        enable_thinking = false,
-        temperature = 0.1f
-    )
+    private val verificationConfig = GenerationConfig(maxTokens = 128)
 
     /**
      * Uses the LLM to extract concrete, verifiable factual claims from the
@@ -79,7 +72,7 @@ class ConstraintChecker(private val db: AgentDatabase) {
         """.trimIndent()
 
         val sb = StringBuilder()
-        llm.generateStreamFlow(prompt, extractionConfig).collect { sb.append(it) }
+        llm.generateStreamFlow(prompt, extractionConfig).collect { chunk -> if (chunk is LlmStreamResult.Token) sb.append(chunk.text) }
 
         val raw = sb.toString().trim()
         if (raw.contains("NONE", ignoreCase = true)) return@withContext emptyList<String>()
@@ -260,7 +253,7 @@ class ConstraintChecker(private val db: AgentDatabase) {
         """.trimIndent()
 
         val sb = StringBuilder()
-        llm.generateStreamFlow(prompt, verificationConfig).collect { sb.append(it) }
+        llm.generateStreamFlow(prompt, verificationConfig).collect { chunk -> if (chunk is LlmStreamResult.Token) sb.append(chunk.text) }
         val response = sb.toString().trim().lowercase()
         return response.startsWith("yes")
     }

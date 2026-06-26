@@ -1,7 +1,8 @@
 package com.agent42.core
 
-import ai.nexa.ml.LlmWrapper
-import ai.nexa.ml.bean.GenerationConfig
+import com.nexa.sdk.LlmWrapper
+import com.nexa.sdk.bean.GenerationConfig
+import com.nexa.sdk.bean.LlmStreamResult
 import com.agent42.memory.AgentDatabase
 import com.agent42.memory.ConversationEntity
 import com.agent42.memory.ReasoningMode
@@ -73,8 +74,10 @@ class ContextManager(private val db: AgentDatabase) {
             ${toSummarize.joinToString("\n") { "${it.role}: ${it.content}" }}
         """.trimIndent()
         val result = StringBuilder()
-        llm.generateStreamFlow(summaryPrompt, GenerationConfig(max_tokens = 256, enable_thinking = false))
-            .collect { result.append(it) }
+        llm.generateStreamFlow(summaryPrompt, GenerationConfig(maxTokens = 256))
+            .collect { chunk ->
+                if (chunk is LlmStreamResult.Token) result.append(chunk.text)
+            }
         val summaryEntry = ContextEntry("system", "[Summary]: ${result}", result.length / 4)
         _contextWindow.value = listOf(summaryEntry) + toKeep
     }
