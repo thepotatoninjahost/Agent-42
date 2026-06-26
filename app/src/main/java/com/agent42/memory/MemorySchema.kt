@@ -28,6 +28,12 @@ class AgentConverters {
         if (value.isNullOrBlank()) emptyList() else value.split("|||")
 
     @TypeConverter
+    fun fromLongList(value: List<Long>?): String = value?.joinToString("|||") ?: ""
+    @TypeConverter
+    fun toLongList(value: String?): List<Long> =
+        if (value.isNullOrBlank()) emptyList() else value.split("|||").mapNotNull { it.toLongOrNull() }
+
+    @TypeConverter
     fun fromModificationRecordList(value: List<ModificationRecord>?): String {
         if (value.isNullOrEmpty()) return ""
         return value.joinToString("|||REC|||") { rec ->
