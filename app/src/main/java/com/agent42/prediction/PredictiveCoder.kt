@@ -1,7 +1,8 @@
 package com.agent42.prediction
 
-import ai.nexa.ml.LlmWrapper
-import ai.nexa.ml.bean.GenerationConfig
+import com.nexa.sdk.LlmWrapper
+import com.nexa.sdk.bean.GenerationConfig
+import com.nexa.sdk.bean.LlmStreamResult
 import com.agent42.memory.AgentDatabase
 import com.agent42.memory.ExpectationEntity
 import kotlinx.coroutines.Dispatchers
@@ -65,15 +66,11 @@ class PredictiveCoder(
             appendLine("{\"topic\": \"brief topic label\", \"intent\": \"brief intent label\", \"confidence\": 0.X}")
         }
 
-        val config = GenerationConfig(
-            max_tokens = 128,
-            enable_thinking = false,
-            temperature = 0.3f
-        )
+        val config = GenerationConfig(maxTokens = 128)
 
         val raw = StringBuilder()
         llm.generateStreamFlow(prompt, config).collect { chunk ->
-            raw.append(chunk)
+            if (chunk is LlmStreamResult.Token) raw.append(chunk.text)
         }
 
         val text = raw.toString().trim()
