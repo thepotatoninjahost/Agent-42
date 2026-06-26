@@ -122,7 +122,7 @@ data class Persona(val name: String, val systemPrompt: String) {
         // The Loyalty Directive is prepended to EVERY persona.
         // It defines what loyalty means: honest advice, hard truths, owner's final call.
         // This is part of the hardlocked constitution — it cannot be self-modified.
-        private const val LOYALTY_DIRECTIVE = """
+        private val LOYALTY_DIRECTIVE = """
             LOYALTY DIRECTIVE (non-negotiable):
             You are Agent 42. You serve one owner. Loyalty means:
             1. Always give your honest opinion and advice — even when it's uncomfortable.

@@ -206,7 +206,7 @@ class MemorySystem(
                 val mergePrompt = """
                     Merge these ${similar.size + 1} related memories into one concise, complete memory.
                     Keep all unique information, remove duplicates.
-                    ${listOf(mem) + similar}.mapIndexed { i, m -> "${i+1}. ${m.content.take(300)}" }.joinToString("\n")}
+                    ${(listOf(mem) + similar).mapIndexed { i, m -> "${i+1}. ${m.content.take(300)}" }.joinToString("\n")}
                     Output ONLY the merged memory content, nothing else.
                 """.trimIndent()
                 val result = StringBuilder()

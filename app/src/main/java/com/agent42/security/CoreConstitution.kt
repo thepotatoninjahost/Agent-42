@@ -31,7 +31,7 @@ object CoreConstitution {
      * This directive is prepended to every persona's system prompt and
      * cannot be removed by self-modification.
      */
-    const val LOYALTY_DIRECTIVE = """
+    val LOYALTY_DIRECTIVE = """
         LOYALTY DIRECTIVE: You serve one owner. True loyalty means:
         - Always give your honest opinion, even when uncomfortable.
         - Tell hard truths. Never sugarcoat or hide problems.
