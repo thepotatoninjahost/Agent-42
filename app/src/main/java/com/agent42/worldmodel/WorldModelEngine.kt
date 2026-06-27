@@ -467,7 +467,7 @@ class WorldModelEngine(
                 createdAt = now,
                 lastUpdated = now,
                 source = source.name,
-                embedding = embed(candidate.label),
+                embedding = embed(candidate.label)?.let { floatArrayToByteArray(it) },
                 attributes = attributesToJson(candidate.attributes)
             )
         )
@@ -741,15 +741,21 @@ class WorldModelEngine(
      * have them; otherwise falls back to token-overlap cosine on the labels.
      * This mirrors MemorySystem's defensive pattern (the LLM may not expose
      * an embedding method).
+     *
+     * Note: embeddings are stored in [WorldEntity] as `ByteArray` (the storage
+     * form, see [floatArrayToByteArray]); we decode them back to `FloatArray`
+     * here for the cosine computation.
      */
     private fun similarity(labelA: String, labelB: String, embeddingB: ByteArray?): Float {
-        val embA = embed(labelA)
-        val embB = embeddingB ?: embed(labelB)
+        val embA = embed(labelA)                       // FloatArray?
+        val embB = embeddingB?.let { byteArrayToFloats(it) }  // FloatArray?
         if (embA != null && embB != null && embA.size == embB.size && embA.isNotEmpty()) {
             val cos = cosine(embA, embB)
             // Cosine is in [-1,1]; remap to [0,1] for threshold comparability.
             return ((cos + 1f) / 2f).coerceIn(0f, 1f)
         }
+        // One side had an embedding but the other didn't — still fall through
+        // to token overlap, which is a reasonable cross-modal fallback.
         return tokenOverlapCosine(labelA, labelB)
     }
 
@@ -781,6 +787,21 @@ class WorldModelEngine(
         }
         val denom = sqrt(na) * sqrt(nb)
         return if (denom == 0.0) 0f else (dot / denom).toFloat()
+    }
+
+    /** Encode a FloatArray embedding as a little-endian ByteArray for Room storage. */
+    private fun floatArrayToByteArray(arr: FloatArray): ByteArray {
+        val buffer = ByteBuffer.allocate(arr.size * 4).order(ByteOrder.LITTLE_ENDIAN)
+        buffer.asFloatBuffer().put(arr)
+        return buffer.array()
+    }
+
+    /** Decode a stored ByteArray back to its FloatArray embedding. */
+    private fun byteArrayToFloats(bytes: ByteArray): FloatArray {
+        val buffer = ByteBuffer.wrap(bytes).order(ByteOrder.LITTLE_ENDIAN)
+        val floats = FloatArray(bytes.size / 4)
+        buffer.asFloatBuffer().get(floats)
+        return floats
     }
 
     /** Token-overlap cosine — the embedding-free fallback. */

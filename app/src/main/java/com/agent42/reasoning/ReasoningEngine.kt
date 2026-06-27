@@ -12,6 +12,7 @@ import com.agent42.memory.MemorySystem
 import com.agent42.memory.ReasoningMode
 import com.agent42.prediction.PredictiveCoder
 import com.agent42.verification.ConstraintChecker
+import com.agent42.worldmodel.WorldModelContradictionChecker
 import com.agent42.worldmodel.WorldModelEngine
 import com.agent42.worldmodel.WorldModelQuery
 import kotlinx.coroutines.flow.Flow
