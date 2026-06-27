@@ -91,7 +91,11 @@ object CoreConstitution {
         "com.agent42.security.OwnerAuth",
         "com.agent42.security.ConstitutionEnforcer",
         "com.agent42.security.ActionLog",
-        "com.agent42.security.PermissionManager"
+        "com.agent42.security.PermissionManager",
+        // World model: the agent may revise WHAT it believes (the world model
+        // data itself is unprotected), but not HOW it learns. The revision
+        // rules are protected per REAL_INTELLIGENCE_PLAN.md section 3.5.
+        "com.agent42.worldmodel.RevisionRules"
     )
 
     /**

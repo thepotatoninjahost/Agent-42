@@ -12,6 +12,7 @@ import androidx.core.content.ContextCompat
 import androidx.compose.foundation.layout.*
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Chat
+import androidx.compose.material.icons.filled.Hub
 import androidx.compose.material.icons.filled.Memory
 import androidx.compose.material.icons.filled.Settings
 import androidx.compose.material.icons.filled.School
@@ -36,6 +37,7 @@ import com.agent42.ui.learning.LearningDashboardScreen
 import com.agent42.ui.memory.MemoryScreen
 import com.agent42.ui.approval.ApprovalScreen
 import com.agent42.ui.settings.SettingsScreen
+import com.agent42.ui.worldmodel.WorldModelScreen
 import com.agent42.voice.VoiceIO
 import kotlinx.coroutines.flow.collectLatest
 
@@ -129,6 +131,7 @@ fun AgentApp(
     val screens = listOf(
         "Chat" to Icons.Default.Chat,
         "Memory" to Icons.Default.Memory,
+        "World" to Icons.Default.Hub,
         "Learning" to Icons.Default.School,
         "Changes" to Icons.Default.ChangeCircle,
         "Settings" to Icons.Default.Settings
@@ -256,18 +259,24 @@ fun AgentApp(
                     1 -> MemoryScreen(
                         memories = vm.allMemories.collectAsState().value
                     )
-                    2 -> LearningDashboardScreen(
+                    2 -> WorldModelScreen(
+                        stats = vm.worldModelStats.collectAsState().value,
+                        entities = vm.worldModelEntities.collectAsState().value,
+                        revisions = vm.worldModelRevisions.collectAsState().value,
+                        onCorrectEntity = { id, conf, note -> vm.correctWorldModelEntity(id, conf, note) }
+                    )
+                    3 -> LearningDashboardScreen(
                         strategyWeights = vm.strategyWeights.collectAsState().value,
                         memoryCount = vm.memoryCount.collectAsState().value,
                         totalInteractions = vm.totalInteractions.collectAsState().value,
                         recentReflections = vm.recentReflections.collectAsState().value
                     )
-                    3 -> ApprovalScreen(
+                    4 -> ApprovalScreen(
                         pendingProposals = vm.pendingProposals.collectAsState().value,
                         onApprove = { vm.approveProposal(it) },
                         onReject = { id, reason -> vm.rejectProposal(id, reason) }
                     )
-                    4 -> SettingsScreen(
+                    5 -> SettingsScreen(
                         isFirstRun = showFirstRun,
                         modelInfo = deps.modelManager.getModelStorageInfo(),
                         personas = personaMap.keys.toList(),

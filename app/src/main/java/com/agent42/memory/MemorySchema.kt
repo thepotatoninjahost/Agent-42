@@ -677,9 +677,15 @@ data class MotionStateCount(val motionState: String, val count: Int)
         PredictionEntity::class, System1CacheEntry::class,
         MetacognitiveEvent::class, ExpectationEntity::class,
         KnowledgeGapEntity::class, KnownFactEntity::class,
-        SensorSnapshotEntity::class
+        SensorSnapshotEntity::class,
+        // World model (system 2.1) — see com.agent42.worldmodel.WorldModelSchema
+        com.agent42.worldmodel.WorldEntity::class,
+        com.agent42.worldmodel.WorldRelation::class,
+        com.agent42.worldmodel.CausalModel::class,
+        com.agent42.worldmodel.BeliefRevision::class,
+        com.agent42.worldmodel.Observation::class
     ],
-    version = 3,
+    version = 4,
     exportSchema = false
 )
 @TypeConverters(AgentConverters::class)
@@ -701,4 +707,10 @@ abstract class AgentDatabase : RoomDatabase() {
     abstract fun knowledgeGapDao(): KnowledgeGapDao
     abstract fun knownFactDao(): KnownFactDao
     abstract fun sensorSnapshotDao(): SensorSnapshotDao
+    // World model DAOs (system 2.1)
+    abstract fun worldEntityDao(): com.agent42.worldmodel.WorldEntityDao
+    abstract fun worldRelationDao(): com.agent42.worldmodel.WorldRelationDao
+    abstract fun causalModelDao(): com.agent42.worldmodel.CausalModelDao
+    abstract fun beliefRevisionDao(): com.agent42.worldmodel.BeliefRevisionDao
+    abstract fun observationDao(): com.agent42.worldmodel.ObservationDao
 }

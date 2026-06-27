@@ -73,6 +73,13 @@ object AppInitializer {
         val sensorContextProvider = com.agent42.sensors.SensorContextProvider(
             deps.appContext, deps.db
         )
+        // World Model (system 2.1) — persistent structured knowledge graph.
+        // The engine writes beliefs; the query layer reads them. Both share the
+        // agent DB. The LLM is used for extraction and (best-effort) embeddings.
+        val worldModelEngine = com.agent42.worldmodel.WorldModelEngine(deps.db, llm)
+        val worldModelQuery = com.agent42.worldmodel.WorldModelQuery(deps.db, llm)
+        val worldModelContradictionChecker = com.agent42.worldmodel.WorldModelContradictionChecker(worldModelQuery, llm)
+        val worldModelConsolidator = com.agent42.worldmodel.WorldModelConsolidator(deps.db)
 
         return AgentViewModel(
             llm = llm,
@@ -88,7 +95,11 @@ object AppInitializer {
             predictiveCoder = predictiveCoder,
             predictionEngine = predictionEngine,
             knowledgeGapTracker = knowledgeGapTracker,
-            sensorContextProvider = sensorContextProvider
+            sensorContextProvider = sensorContextProvider,
+            worldModelEngine = worldModelEngine,
+            worldModelQuery = worldModelQuery,
+            worldModelContradictionChecker = worldModelContradictionChecker,
+            worldModelConsolidator = worldModelConsolidator
         )
     }
 

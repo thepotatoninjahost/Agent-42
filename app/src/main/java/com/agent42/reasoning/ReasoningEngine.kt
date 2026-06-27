@@ -12,6 +12,8 @@ import com.agent42.memory.MemorySystem
 import com.agent42.memory.ReasoningMode
 import com.agent42.prediction.PredictiveCoder
 import com.agent42.verification.ConstraintChecker
+import com.agent42.worldmodel.WorldModelEngine
+import com.agent42.worldmodel.WorldModelQuery
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.flow
 
@@ -46,6 +48,10 @@ sealed class ReasoningOutput {
     data class DebateConsensus(val consensusLevel: Float, val notes: String) : ReasoningOutput()
     data class PredictionResult(val predictedQuery: String, val similarity: Float, val isSurprising: Boolean) : ReasoningOutput()
     data class KnowledgeGapAlert(val topic: String, val gapType: String, val suggestion: String) : ReasoningOutput()
+    /** World model snapshot was injected into the LLM context (section 3.5). */
+    data class WorldModelContext(val entityCount: Int, val summary: String) : ReasoningOutput()
+    /** The world model was updated after this exchange. */
+    data class WorldModelUpdated(val entitiesTouched: Int, val relationsTouched: Int, val revisions: Int) : ReasoningOutput()
 }
 
 fun processReasoning(
@@ -56,8 +62,27 @@ fun processReasoning(
     system1Cache: System1Cache? = null,
     metacognitiveMonitor: MetacognitiveMonitor? = null,
     constraintChecker: ConstraintChecker? = null,
-    predictiveCoder: PredictiveCoder? = null
+    predictiveCoder: PredictiveCoder? = null,
+    worldModelQuery: WorldModelQuery? = null,
+    worldModelEngine: WorldModelEngine? = null,
+    worldModelContradictionChecker: WorldModelContradictionChecker? = null
 ): Flow<ReasoningOutput> = flow {
+
+    // ═══ PHASE 0a: WORLD MODEL — snapshot before generation (section 3.5) ═══
+    // Pull the agent's current beliefs relevant to this query and inject them
+    // into the prompt context. The LLM reasons OVER the world model, not in
+    // place of it. This is what separates Agent 42 from a bare LLM wrapper.
+    var worldModelSnapshot = ""
+    worldModelQuery?.let { wmq ->
+        val snapshot = wmq.snapshot(query)
+        if (snapshot.isNotBlank()) {
+            worldModelSnapshot = snapshot
+            emit(ReasoningOutput.WorldModelContext(
+                entityCount = snapshot.count { it == '\n' },
+                summary = snapshot.lineSequence().firstOrNull() ?: ""
+            ))
+        }
+    }
 
     // ═══ PHASE 0: PREDICTIVE CODING — generate expectation before processing ═══
     // The agent predicts what the user wants before even reading the query.
@@ -114,7 +139,7 @@ fun processReasoning(
     // ═══ PHASE 2: SYSTEM 2 — full reasoning (with metacognitive monitoring) ═══
     when (mode) {
         ReasoningMode.DIRECT -> {
-            val prompt = buildPrompt(contextManager, memorySystem, query)
+            val prompt = buildPrompt(contextManager, memorySystem, query, worldModelSnapshot)
             val accumulated = StringBuilder()
             llm.generateStreamFlow(prompt, generationConfig(thinking = true))
                 .collect { chunk ->
@@ -134,7 +159,7 @@ fun processReasoning(
         }
 
         ReasoningMode.CHAIN_OF_THOUGHT -> {
-            val prompt = buildThoughtChainPrompt(contextManager, memorySystem, query)
+            val prompt = buildThoughtChainPrompt(contextManager, memorySystem, query, worldModelSnapshot)
             val accumulated = StringBuilder()
             llm.generateStreamFlow(prompt, generationConfig(thinking = true))
                 .collect { chunk ->
@@ -155,7 +180,7 @@ fun processReasoning(
         ReasoningMode.DECOMPOSE -> {
             val subProblems = decompose(llm, query)
             if (subProblems.isEmpty()) {
-                val prompt = buildThoughtChainPrompt(contextManager, memorySystem, query)
+                val prompt = buildThoughtChainPrompt(contextManager, memorySystem, query, worldModelSnapshot)
                 llm.generateStreamFlow(prompt, generationConfig(thinking = true))
                     .collect { chunk ->
                         if (chunk is LlmStreamResult.Token) {
@@ -193,7 +218,7 @@ fun processReasoning(
         }
 
         ReasoningMode.REFLECTIVE -> {
-            val initialPrompt = buildPrompt(contextManager, memorySystem, query)
+            val initialPrompt = buildPrompt(contextManager, memorySystem, query, worldModelSnapshot)
             val initialAnswer = StringBuilder()
             llm.generateStreamFlow(initialPrompt, generationConfig(thinking = true))
                 .collect { chunk ->
@@ -230,7 +255,7 @@ fun processReasoning(
             if (debatePatterns.any { lower.contains(it) }) {
                 // Use Internal Debate — multi-perspective argumentation
                 emit(ReasoningOutput.DebateStarted(listOf("SKEPTIC", "OPTIMIST", "PRAGMATIST")))
-                val context = buildPrompt(contextManager, memorySystem, query)
+                val context = buildPrompt(contextManager, memorySystem, query, worldModelSnapshot)
                 val debateResult = InternalDebate.conductDebate(llm, query, context) { emit(it) }
                 finalAnswer = StringBuilder(debateResult.finalAnswer)
                 emit(ReasoningOutput.DebateConsensus(debateResult.consensusLevel, debateResult.judgeNotes))
@@ -238,7 +263,7 @@ fun processReasoning(
                 finalConfidence = debateResult.consensusLevel
             } else {
                 // Use Tree of Thoughts for exploration-type queries
-                val best = treeOfThoughts(llm, contextManager, memorySystem, query) { emit(it) }
+                val best = treeOfThoughts(llm, contextManager, memorySystem, query, { emit(it) }, worldModelSnapshot)
                 finalAnswer = StringBuilder(best)
             }
         }
@@ -290,6 +315,21 @@ fun processReasoning(
         checker.extractFacts(llm, finalAnswer.toString(), interactionId)
     }
 
+    // ═══ PHASE 4b: WORLD-MODEL CONTRADICTION CHECK (section 3.5) ═══
+    // Independently of the ConstraintChecker's known-facts DB, check the answer
+    // against the agent's high-confidence world-model beliefs. A contradiction
+    // here means the agent's own model of reality disagrees with what it just
+    // said — a strong signal of hallucination.
+    worldModelContradictionChecker?.let { checker ->
+        val wmContradictions = checker.check(finalAnswer.toString())
+        wmContradictions.forEach { c ->
+            emit(ReasoningOutput.ConstraintViolation(c.beliefFact, c.answerClaim, c.severity))
+            // World-model contradictions are weighted harder: they're the agent
+            // disagreeing with itself, not just an external fact mismatch.
+            finalConfidence = (finalConfidence - c.severity * 0.25f).coerceAtLeast(0f)
+        }
+    }
+
     // ═══ PHASE 5: METACOGNITIVE FINAL REVIEW ═══
     // Full review after generation — deeper than chunk-level analysis
     metacognitiveMonitor?.let { monitor ->
@@ -314,6 +354,24 @@ fun processReasoning(
                 topic, "LOW_CONFIDENCE",
                 "I'm not confident about this topic. I should learn more."
             ))
+        }
+    }
+
+    // ═══ PHASE 8: WORLD MODEL UPDATE (section 3.5) ═══
+    // Ingest the exchange: the owner's query as an OWNER_STATEMENT (high trust)
+    // and the agent's own answer as an LLM observation (low trust, a hypothesis
+    // until corroborated). This is how the world model grows from experience.
+    worldModelEngine?.let { engine ->
+        val results = engine.ingestExchange(
+            userQuery = query,
+            agentResponse = finalAnswer.toString(),
+            sessionId = contextManager.sessionId
+        )
+        val totalEntities = results.sumOf { it.entitiesTouched.size }
+        val totalRelations = results.sumOf { it.relationsTouched.size }
+        val totalRevisions = results.sumOf { it.revisions.size }
+        if (totalEntities + totalRelations + totalRevisions > 0) {
+            emit(ReasoningOutput.WorldModelUpdated(totalEntities, totalRelations, totalRevisions))
         }
     }
 
@@ -405,7 +463,8 @@ private suspend fun critique(llm: LlmWrapper, query: String, answer: String): Cr
 private suspend fun buildPrompt(
     contextManager: ContextManager,
     memorySystem: MemorySystem,
-    query: String
+    query: String,
+    worldModelContext: String = ""
 ): String {
     val context = contextManager.getContextEntries()
     val persona = contextManager.getActivePersona()
@@ -417,6 +476,10 @@ private suspend fun buildPrompt(
         if (contextManager.sensorContext.isNotBlank()) {
             appendLine("\n## Current Context")
             appendLine(contextManager.sensorContext)
+        }
+        if (worldModelContext.isNotBlank()) {
+            appendLine()
+            appendLine(worldModelContext)
         }
         if (truncatedMemories.isNotBlank()) {
             appendLine("\n## Relevant Context From Memory")
@@ -434,9 +497,10 @@ private suspend fun buildPrompt(
 private suspend fun buildThoughtChainPrompt(
     contextManager: ContextManager,
     memorySystem: MemorySystem,
-    query: String
+    query: String,
+    worldModelContext: String = ""
 ): String {
-    return buildPrompt(contextManager, memorySystem, query) +
+    return buildPrompt(contextManager, memorySystem, query, worldModelContext) +
            "\n\nThink through this step by step before answering."
 }
 
@@ -482,9 +546,10 @@ private suspend fun treeOfThoughts(
     contextManager: ContextManager,
     memorySystem: MemorySystem,
     query: String,
-    emit: suspend (ReasoningOutput) -> Unit
+    emit: suspend (ReasoningOutput) -> Unit,
+    worldModelContext: String = ""
 ): String {
-    val prompt = buildPrompt(contextManager, memorySystem, query)
+    val prompt = buildPrompt(contextManager, memorySystem, query, worldModelContext)
     val branchCount = 3
     val branches = mutableListOf<String>()
 

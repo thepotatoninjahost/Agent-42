@@ -13,6 +13,10 @@ import com.agent42.prediction.PredictionEngine
 import com.agent42.prediction.PredictiveCoder
 import com.agent42.sensors.SensorContextProvider
 import com.agent42.verification.ConstraintChecker
+import com.agent42.worldmodel.WorldModelContradictionChecker
+import com.agent42.worldmodel.WorldModelEngine
+import com.agent42.worldmodel.WorldModelQuery
+import com.agent42.worldmodel.WorldModelStats
 import kotlinx.coroutines.*
 import kotlinx.coroutines.flow.*
 
@@ -31,7 +35,11 @@ class AgentViewModel(
     private val predictiveCoder: PredictiveCoder? = null,
     private val predictionEngine: PredictionEngine? = null,
     private val knowledgeGapTracker: KnowledgeGapTracker? = null,
-    private val sensorContextProvider: SensorContextProvider? = null
+    private val sensorContextProvider: SensorContextProvider? = null,
+    private val worldModelEngine: WorldModelEngine? = null,
+    private val worldModelQuery: WorldModelQuery? = null,
+    private val worldModelContradictionChecker: WorldModelContradictionChecker? = null,
+    private val worldModelConsolidator: com.agent42.worldmodel.WorldModelConsolidator? = null
 ) : ViewModel() {
 
     private val _messages = MutableStateFlow<List<ChatMessage>>(emptyList())
@@ -72,6 +80,13 @@ class AgentViewModel(
     val system1Stats = MutableStateFlow<String>("")
     val predictionAccuracy = MutableStateFlow<Float>(0f)
     val metacognitiveAlerts = MutableStateFlow<List<String>>(emptyList())
+    // World model (system 2.1)
+    private val _worldModelStats = MutableStateFlow<WorldModelStats?>(null)
+    val worldModelStats: StateFlow<WorldModelStats?> = _worldModelStats.asStateFlow()
+    private val _worldModelRevisions = MutableStateFlow<List<com.agent42.worldmodel.BeliefRevision>>(emptyList())
+    val worldModelRevisions: StateFlow<List<com.agent42.worldmodel.BeliefRevision>> = _worldModelRevisions.asStateFlow()
+    private val _worldModelEntities = MutableStateFlow<List<com.agent42.worldmodel.WorldEntity>>(emptyList())
+    val worldModelEntities: StateFlow<List<com.agent42.worldmodel.WorldEntity>> = _worldModelEntities.asStateFlow()
 
     private val isProcessing = java.util.concurrent.atomic.AtomicBoolean(false)
 
@@ -125,7 +140,10 @@ class AgentViewModel(
                     system1Cache = system1Cache,
                     metacognitiveMonitor = metacognitiveMonitor,
                     constraintChecker = constraintChecker,
-                    predictiveCoder = predictiveCoder
+                    predictiveCoder = predictiveCoder,
+                    worldModelQuery = worldModelQuery,
+                    worldModelEngine = worldModelEngine,
+                    worldModelContradictionChecker = worldModelContradictionChecker
                 ).collect { output ->
                     when (output) {
                         is ReasoningOutput.Chunk -> {
@@ -197,6 +215,19 @@ class AgentViewModel(
                         is ReasoningOutput.PredictionResult -> {}
                         is ReasoningOutput.KnowledgeGapAlert -> {
                             knowledgeGaps.value = knowledgeGaps.value + output.suggestion
+                        }
+                        is ReasoningOutput.WorldModelContext -> {
+                            // World-model snapshot was injected into the LLM prompt.
+                            // Surface a light note so the owner can see the agent is
+                            // reasoning over its beliefs, not just generating.
+                            metacognitiveAlerts.value = metacognitiveAlerts.value +
+                                "World model: ${output.entityCount} beliefs injected into context"
+                        }
+                        is ReasoningOutput.WorldModelUpdated -> {
+                            // The world model was revised from this exchange.
+                            metacognitiveAlerts.value = metacognitiveAlerts.value +
+                                "World model updated: ${output.entitiesTouched} entities, " +
+                                "${output.relationsTouched} relations, ${output.revisions} revisions"
                         }
                     }
                 }
@@ -351,6 +382,9 @@ class AgentViewModel(
                         llm,
                         memorySystem.getAllMemories().map { it.content }
                     )
+                    // World model consolidation (section 3.3): merge duplicates,
+                    // flag stale low-confidence beliefs, recalibrate by recency.
+                    worldModelConsolidator?.consolidate()
                     refreshData()
                     loadCognitiveStats()
                 }
@@ -381,6 +415,28 @@ class AgentViewModel(
         knowledgeGapTracker?.let { tracker ->
             val suggestions = tracker.getProactiveSuggestions()
             knowledgeGaps.value = suggestions
+        }
+        refreshWorldModelStats()
+    }
+
+    /** Pull current world-model stats + recent revisions + top entities into the UI flows. */
+    suspend fun refreshWorldModelStats() = withContext(Dispatchers.IO) {
+        worldModelQuery?.let { wmq ->
+            _worldModelStats.value = wmq.stats()
+            _worldModelRevisions.value = wmq.recentRevisions(30)
+            _worldModelEntities.value = wmq.topEntities(100)
+        }
+    }
+
+    /**
+     * Owner-driven correction of a single world-model entity belief. Called from
+     * the World Model screen. Bypasses the Bayesian loop and stamps the belief
+     * as [BeliefSource.OWNER_STATEMENT]; logs a BeliefRevision for the audit trail.
+     */
+    fun correctWorldModelEntity(entityId: Long, newConfidence: Float, note: String) {
+        viewModelScope.launch(Dispatchers.IO) {
+            worldModelEngine?.ownerCorrectEntity(entityId, newConfidence, note)
+            refreshWorldModelStats()
         }
     }
 
