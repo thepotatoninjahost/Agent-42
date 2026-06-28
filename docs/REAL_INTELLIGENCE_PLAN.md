@@ -72,8 +72,7 @@ re-break the build:
 | `verification/` | ConstraintChecker — verifies against known facts | Implemented |
 | `selfmodification/` | CodeModificationEngine + ApprovalGate — proposes behavior changes, auto-rollback, protected packages | Implemented |
 | `security/` | CoreConstitution (12 rules, hardlocked), ConstitutionEnforcer, OwnerAuth, PermissionManager, ActionLog, SecurityLayer | Implemented |
-| `nexa/` | NexaSdkAdapter | Implemented |
-| `core/` | AgentViewModel, AppInitializer, ContextManager, ModelManager, ThermalManager | Implemented |
+| `core/` | AgentViewModel, AppInitializer, ContextManager, ModelManager (loads any owner-picked model via SAF folder picker, no hardcoded filename), ThermalManager | Implemented |
 | `voice/` | VoiceIO — STT + TTS | Implemented |
 | `sensors/` | SensorContextProvider — phone sensor data | Implemented |
 | `ui/` | MainActivity + 5 screens (chat, memory, learning, approval, settings) | Implemented |
