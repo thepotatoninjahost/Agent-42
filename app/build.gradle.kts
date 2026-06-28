@@ -74,6 +74,9 @@ dependencies {
     // AppCompat — base theme
     implementation("androidx.appcompat:appcompat:1.7.0")
 
+    // DocumentFile — SAF tree access so the owner can pick a model folder
+    implementation("androidx.documentfile:documentfile:1.0.1")
+
     // Compose
     implementation(platform("androidx.compose:compose-bom:2024.10.00"))
     implementation("androidx.compose.ui:ui")
