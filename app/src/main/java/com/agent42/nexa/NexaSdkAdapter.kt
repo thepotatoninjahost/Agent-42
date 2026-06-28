@@ -7,7 +7,6 @@ import com.nexa.sdk.bean.ModelConfig
 import com.nexa.sdk.NexaSdk
 import com.nexa.sdk.bean.LlmStreamResult
 import android.content.Context
-import android.os.Environment
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.catch
@@ -35,29 +34,13 @@ class NexaSdkAdapter(private val context: Context) {
         if (!isInitialized) return@withContext Result.failure(
             IllegalStateException("SDK not initialized")
         )
-
-        var targetPath = modelPath
-        var targetFile = File(targetPath)
-
-        if (!targetFile.exists()) {
-            val sourceFile = scanForModelFile()
-            if (sourceFile != null) {
-                val installedFile = installModel(sourceFile, modelName)
-                if (installedFile != null && installedFile.exists()) {
-                    targetPath = installedFile.absolutePath
-                    targetFile = installedFile
-                }
-            }
-        }
-
-        if (!targetFile.exists()) return@withContext Result.failure(
-            IllegalArgumentException("Model not found at: $modelPath and local discovery failed.")
+        if (!File(modelPath).exists()) return@withContext Result.failure(
+            IllegalArgumentException("Model not found: $modelPath")
         )
-
         runCatching {
             val result = LlmWrapper.builder()
                 .llmCreateInput(LlmCreateInput(
-                    model_name = modelName, model_path = targetPath, tokenizer_path = "",
+                    model_name = modelName, model_path = modelPath, tokenizer_path = "",
                     config = ModelConfig(max_tokens = maxTokens, enable_thinking = enableThinking),
                     plugin_id = pluginId
                 ))
@@ -66,80 +49,6 @@ class NexaSdkAdapter(private val context: Context) {
             llmWrapper = wrapper
             wrapper
         }.recoverCatching { e -> throw NexaSdkException("Load failed: ${e.message}", e) }
-    }
-
-    private fun scanForModelFile(): File? {
-        val searchDirs = mutableListOf<File>()
-
-        context.getExternalFilesDirs(null)?.filterNotNull()?.forEach { searchDirs.add(it) }
-        context.externalCacheDir?.let { searchDirs.add(it) }
-
-        try {
-            searchDirs.add(Environment.getExternalStoragePublicDirectory(Environment.DIRECTORY_DOWNLOADS))
-            searchDirs.add(Environment.getExternalStoragePublicDirectory(Environment.DIRECTORY_DOCUMENTS))
-            searchDirs.add(File("/storage/emulated/0/Download"))
-            searchDirs.add(File("/storage/emulated/0/Documents"))
-            searchDirs.add(Environment.getExternalStorageDirectory())
-        } catch (e: Exception) {
-            // ignore
-        }
-
-        for (dir in searchDirs.distinct()) {
-            if (dir.exists() && dir.isDirectory) {
-                val found = searchDirRecursively(dir)
-                if (found != null) return found
-            }
-        }
-        return null
-    }
-
-    private fun searchDirRecursively(dir: File): File? {
-        try {
-            val walk = dir.walkTopDown()
-                .maxDepth(4)
-                .onFail { _, _ -> }
-
-            for (file in walk) {
-                if (file.isFile) {
-                    val name = file.name
-                    if (name == "files-1-1.nexa" || (name.endsWith(".nexa") && file.length() >= 500 * 1024 * 1024L)) {
-                        return file
-                    }
-                }
-            }
-        } catch (e: Exception) {
-            // ignore
-        }
-        return null
-    }
-
-    private suspend fun installModel(sourceFile: File, modelName: String): File? = withContext(Dispatchers.IO) {
-        val destDir = File(context.filesDir, "models/$modelName")
-        if (!destDir.exists() && !destDir.mkdirs()) {
-            return@withContext null
-        }
-        val destFile = File(destDir, "files-1-1.nexa")
-
-        if (destFile.exists() && destFile.length() == sourceFile.length()) {
-            return@withContext destFile
-        }
-
-        try {
-            val buffer = ByteArray(64 * 1024)
-            sourceFile.inputStream().use { input ->
-                destFile.outputStream().use { output ->
-                    var bytes = input.read(buffer)
-                    while (bytes >= 0) {
-                        output.write(buffer, 0, bytes)
-                        bytes = input.read(buffer)
-                    }
-                }
-            }
-            return@withContext destFile
-        } catch (e: Exception) {
-            destFile.delete()
-            return@withContext null
-        }
     }
 
     fun generate(
@@ -164,12 +73,7 @@ class NexaSdkAdapter(private val context: Context) {
 
     fun getModelPath(modelName: String): String =
         File(context.filesDir, "models/$modelName/files-1-1.nexa").absolutePath
-
-    fun isModelDownloaded(modelName: String): Boolean {
-        val path = getModelPath(modelName)
-        if (File(path).exists()) return true
-        return scanForModelFile() != null
-    }
+    fun isModelDownloaded(modelName: String): Boolean = File(getModelPath(modelName)).exists()
 }
 
 class NexaSdkException(message: String, cause: Throwable? = null) : Exception(message, cause)
