@@ -661,7 +661,7 @@ private suspend fun selfConsistencyCheck(
     llm: LlmWrapper,
     query: String,
     answer: String,
-    emit.emit: suspend (ReasoningOutput) -> Unit
+    emit: suspend (ReasoningOutput) -> Unit
 ): Pair<Float, Boolean> {
     val verifyPrompt = """
         You are verifying an answer independently.
