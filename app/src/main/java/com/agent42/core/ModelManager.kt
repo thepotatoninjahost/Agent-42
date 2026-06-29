@@ -45,31 +45,39 @@ class ModelManager(
     private val prefs = context.getSharedPreferences(PREFS, Context.MODE_PRIVATE)
     private val activeDir: File get() = File(context.filesDir, ACTIVE_DIR_NAME)
 
-    suspend fun loadModel(
+        suspend fun loadModel(
         onProgress: (Float) -> Unit,
         onComplete: () -> Unit,
         onError: (String) -> Unit
     ) = withContext(Dispatchers.IO) {
         try {
             onProgress(0.1f)
+
+            // ==================== DEBUG INFO ====================
+            val debugMsg = buildString {
+                append("activeDir: ${activeDir.absolutePath}\n")
+                append("exists: ${activeDir.exists()}\n")
+                append("file count: ${activeDir.listFiles()?.size ?: 0}\n")
+                activeDir.listFiles()?.forEach { f ->
+                    append("   • ${f.name} (${f.length() / (1024*1024)} MB)\n")
+                }
+                append("Entry file: ${findEntryFile(activeDir)?.name ?: "NOT FOUND"}\n")
+            }
+
+            android.widget.Toast.makeText(context, debugMsg.take(300), android.widget.Toast.LENGTH_LONG).show()
+            // ====================================================
+
             if (!activeDir.exists() || activeDir.listFiles()?.isNotEmpty() != true) {
-                onError(
-                    "No model installed yet. Open Settings → Find Model and pick the folder " +
-                        "where you downloaded the model files. Agent 42 will copy them in and " +
-                        "run them. Works with Qwen3-8B-NPU, OmniNeural, or any .gguf model."
-                )
+                onError("No model installed yet.\n\nDebug:\n$debugMsg")
                 return@withContext
             }
+
             val entry = findEntryFile(activeDir)
             if (entry == null) {
-                onError(
-                    "Could not find a model entry file inside ${activeDir.name}. " +
-                        "A valid Nexa model folder contains a 'files-1-*.nexa' file (plus " +
-                        "nexa.manifest and weight shards), or a single .gguf file. " +
-                        "Re-import the correct folder via Settings → Find Model."
-                )
+                onError("Could not find a model entry file.\n\nDebug:\n$debugMsg")
                 return@withContext
             }
+
             val manifest = readManifest(activeDir)
             val modelName = manifest?.optString("ModelName")?.takeIf { it.isNotBlank() }
                 ?: prefs.getString(KEY_MODEL_NAME, "qwen3-8b") ?: "qwen3-8b"
@@ -78,6 +86,7 @@ class ModelManager(
             onProgress(0.5f)
             runCatching { NexaSdk.getInstance().init(context) }
             onProgress(0.7f)
+
             LlmWrapper.builder()
                 .llmCreateInput(LlmCreateInput(
                     model_name = modelName,
@@ -94,11 +103,12 @@ class ModelManager(
                     onComplete()
                 }
                 .onFailure { error -> onError("Model load failed: ${error.message}") }
+
         } catch (e: Exception) {
             Log.e(TAG, "loadModel failed", e)
             onError("Init error: ${e.message}")
         }
-    }
+        }
 
     fun getModel(): LlmWrapper? = llmWrapper
     fun isModelLoaded(): Boolean = llmWrapper != null
