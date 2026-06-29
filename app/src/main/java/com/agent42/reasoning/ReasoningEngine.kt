@@ -17,6 +17,7 @@ import com.agent42.worldmodel.WorldModelEngine
 import com.agent42.worldmodel.WorldModelQuery
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.flow
+import kotlinx.coroutines.launch
 
 data class ReasoningStep(
     val description: String,
@@ -56,6 +57,7 @@ sealed class ReasoningOutput {
 }
 
 fun processReasoning(
+fun processReasoning(
     llm: LlmWrapper,
     contextManager: ContextManager,
     memorySystem: MemorySystem,
@@ -67,14 +69,19 @@ fun processReasoning(
     worldModelQuery: WorldModelQuery? = null,
     worldModelEngine: WorldModelEngine? = null,
     worldModelContradictionChecker: WorldModelContradictionChecker? = null
-): Flow<ReasoningOutput> = flow {    // HARD TIMEOUT — prevents infinite thinking while keeping deep reasoning
-    val timeoutJob = kotlinx.coroutines.launch {
-        kotlinx.coroutines.delay(45_000) // 45 seconds max thinking
-        if (true) { // always trigger for now
+): Flow<ReasoningOutput> = flow {    
+    // HARD TIMEOUT — prevents infinite thinking while keeping deep reasoning
+    val timeoutJob = launch {
+        try {
+            delay(45_000) // 45 seconds max thinking
             emit(ReasoningOutput.Done(0L, ReasoningMode.CHAIN_OF_THOUGHT, 0.6f))
+        } catch (_: Exception) {
+            // Job cancelled normally
         }
     }
 
+    try {
+        
     // ═══ PHASE 0a: WORLD MODEL — snapshot before generation (section 3.5) ═══
     // Pull the agent's current beliefs relevant to this query and inject them
     // into the prompt context. The LLM reasons OVER the world model, not in
