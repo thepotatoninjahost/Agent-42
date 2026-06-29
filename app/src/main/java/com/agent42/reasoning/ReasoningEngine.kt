@@ -385,7 +385,6 @@ fun processReasoning(
         timeoutJob.cancel()   // important
     emit(ReasoningOutput.Done(interactionId, mode, finalConfidence))
 }
-}
 
 private suspend fun classifyQuery(llm: LlmWrapper, query: String): ReasoningMode {
     val lower = query.lowercase()
