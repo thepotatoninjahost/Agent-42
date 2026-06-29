@@ -69,18 +69,33 @@ fun processReasoning(
     worldModelQuery: WorldModelQuery? = null,
     worldModelEngine: WorldModelEngine? = null,
     worldModelContradictionChecker: WorldModelContradictionChecker? = null
-): Flow<ReasoningOutput> = flow {    
-    // HARD TIMEOUT — prevents infinite thinking while keeping deep reasoning
-    val timeoutJob = launch {
-        try {
-            delay(45_000) // 45 seconds max thinking
-            emit(ReasoningOutput.Done(0L, ReasoningMode.CHAIN_OF_THOUGHT, 0.6f))
-        } catch (_: Exception) {
-            // Job cancelled normally
-        }
-    }
-
+): Flow<ReasoningOutput> = flow {
     try {
+        withTimeout(45_000L) {
+            processReasoningInternal(llm, contextManager, memorySystem, query,
+                system1Cache, metacognitiveMonitor, constraintChecker,
+                predictiveCoder, worldModelQuery, worldModelEngine,
+                worldModelContradictionChecker, this)
+        }
+    } catch (e: TimeoutCancellationException) {
+        emit(ReasoningOutput.Done(0L, ReasoningMode.CHAIN_OF_THOUGHT, 0.6f))
+    }
+}
+
+private suspend fun processReasoningInternal(
+    llm: LlmWrapper,
+    contextManager: ContextManager,
+    memorySystem: MemorySystem,
+    query: String,
+    system1Cache: System1Cache?,
+    metacognitiveMonitor: MetacognitiveMonitor?,
+    constraintChecker: ConstraintChecker?,
+    predictiveCoder: PredictiveCoder?,
+    worldModelQuery: WorldModelQuery?,
+    worldModelEngine: WorldModelEngine?,
+    worldModelContradictionChecker: WorldModelContradictionChecker?,
+    emit: FlowCollector<ReasoningOutput>
+) {
         
     // ═══ PHASE 0a: WORLD MODEL — snapshot before generation (section 3.5) ═══
     // Pull the agent's current beliefs relevant to this query and inject them
