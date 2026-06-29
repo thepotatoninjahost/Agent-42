@@ -371,10 +371,7 @@ fun processReasoning(
         }
     }
 
-    // ═══ PHASE 8: WORLD MODEL UPDATE (section 3.5) ═══
-    // Ingest the exchange: the owner's query as an OWNER_STATEMENT (high trust)
-    // and the agent's own answer as an LLM observation (low trust, a hypothesis
-    // until corroborated). This is how the world model grows from experience.
+        // ═══ PHASE 8: WORLD MODEL UPDATE (section 3.5) ═══
     worldModelEngine?.let { engine ->
         val results = engine.ingestExchange(
             userQuery = query,
@@ -390,7 +387,10 @@ fun processReasoning(
     }
 
         timeoutJob.cancel()   // important
-    emit(ReasoningOutput.Done(interactionId, mode, finalConfidence))
+        emit(ReasoningOutput.Done(interactionId, mode, finalConfidence))
+    } finally {
+        timeoutJob.cancel()
+    }
 }
 
 private suspend fun classifyQuery(llm: LlmWrapper, query: String): ReasoningMode {
