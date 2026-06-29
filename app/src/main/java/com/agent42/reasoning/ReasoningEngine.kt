@@ -18,6 +18,7 @@ import com.agent42.worldmodel.WorldModelQuery
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.flow
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.delay
 
 data class ReasoningStep(
     val description: String,
@@ -56,7 +57,6 @@ sealed class ReasoningOutput {
     data class WorldModelUpdated(val entitiesTouched: Int, val relationsTouched: Int, val revisions: Int) : ReasoningOutput()
 }
 
-fun processReasoning(
 fun processReasoning(
     llm: LlmWrapper,
     contextManager: ContextManager,
