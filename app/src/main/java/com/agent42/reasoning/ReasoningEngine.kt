@@ -80,7 +80,7 @@ fun processReasoning(
             )
         }
     } catch (e: TimeoutCancellationException) {
-        emit.emit(ReasoningOutput.Done(0L, ReasoningMode.CHAIN_OF_THOUGHT, 0.6f))
+        emit(ReasoningOutput.Done(0L, ReasoningMode.CHAIN_OF_THOUGHT, 0.6f))
     }
 }
 
@@ -220,7 +220,7 @@ private suspend fun processReasoningInternal(
                         }
                     }
                 emit.emit(ReasoningOutput.Done(interactionId, mode))
-                return@flow
+                return
             }
             val subResults = mutableMapOf<String, String>()
             for (sub in subProblems) {
@@ -389,7 +389,6 @@ private suspend fun processReasoningInternal(
     }
 
         // ═══ PHASE 8: WORLD MODEL UPDATE (section 3.5) ═══
-    worl    // PHASE 8: WORLD MODEL UPDATE
     worldModelEngine?.let { engine ->
         val results = engine.ingestExchange(
             userQuery = query,
