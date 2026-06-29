@@ -67,7 +67,13 @@ fun processReasoning(
     worldModelQuery: WorldModelQuery? = null,
     worldModelEngine: WorldModelEngine? = null,
     worldModelContradictionChecker: WorldModelContradictionChecker? = null
-): Flow<ReasoningOutput> = flow {
+): Flow<ReasoningOutput> = flow {    // HARD TIMEOUT — prevents infinite thinking while keeping deep reasoning
+    val timeoutJob = kotlinx.coroutines.launch {
+        kotlinx.coroutines.delay(45_000) // 45 seconds max thinking
+        if (true) { // always trigger for now
+            emit(ReasoningOutput.Done(0L, ReasoningMode.CHAIN_OF_THOUGHT, 0.6f))
+        }
+    }
 
     // ═══ PHASE 0a: WORLD MODEL — snapshot before generation (section 3.5) ═══
     // Pull the agent's current beliefs relevant to this query and inject them
@@ -376,7 +382,9 @@ fun processReasoning(
         }
     }
 
+        timeoutJob.cancel()   // important
     emit(ReasoningOutput.Done(interactionId, mode, finalConfidence))
+}
 }
 
 private suspend fun classifyQuery(llm: LlmWrapper, query: String): ReasoningMode {
