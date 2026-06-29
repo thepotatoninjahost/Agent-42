@@ -96,7 +96,7 @@ private suspend fun processReasoningInternal(
     worldModelQuery: WorldModelQuery?,
     worldModelEngine: WorldModelEngine?,
     worldModelContradictionChecker: WorldModelContradictionChecker?,
-    emit.emit: FlowCollector<ReasoningOutput>
+    emit: FlowCollector<ReasoningOutput>
 ) {
     
     // ═══ PHASE 0a: WORLD MODEL — snapshot before generation (section 3.5) ═══
@@ -575,7 +575,7 @@ private suspend fun treeOfThoughts(
     contextManager: ContextManager,
     memorySystem: MemorySystem,
     query: String,
-    emit.emit: suspend (ReasoningOutput) -> Unit,
+    emit: suspend (ReasoningOutput) -> Unit,
     worldModelContext: String = ""
 ): String {
     val prompt = buildPrompt(contextManager, memorySystem, query, worldModelContext)
