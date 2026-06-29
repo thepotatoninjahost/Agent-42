@@ -15,10 +15,10 @@ import com.agent42.verification.ConstraintChecker
 import com.agent42.worldmodel.WorldModelContradictionChecker
 import com.agent42.worldmodel.WorldModelEngine
 import com.agent42.worldmodel.WorldModelQuery
+import kotlinx.coroutines.*
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.flow
-import kotlinx.coroutines.launch
-import kotlinx.coroutines.delay
+import kotlinx.coroutines.flow.FlowCollector
 
 data class ReasoningStep(
     val description: String,
@@ -72,13 +72,15 @@ fun processReasoning(
 ): Flow<ReasoningOutput> = flow {
     try {
         withTimeout(45_000L) {
-            processReasoningInternal(llm, contextManager, memorySystem, query,
+            processReasoningInternal(
+                llm, contextManager, memorySystem, query,
                 system1Cache, metacognitiveMonitor, constraintChecker,
                 predictiveCoder, worldModelQuery, worldModelEngine,
-                worldModelContradictionChecker, this)
+                worldModelContradictionChecker, this
+            )
         }
     } catch (e: TimeoutCancellationException) {
-        emit(ReasoningOutput.Done(0L, ReasoningMode.CHAIN_OF_THOUGHT, 0.6f))
+        emit.emit(ReasoningOutput.Done(0L, ReasoningMode.CHAIN_OF_THOUGHT, 0.6f))
     }
 }
 
@@ -94,9 +96,9 @@ private suspend fun processReasoningInternal(
     worldModelQuery: WorldModelQuery?,
     worldModelEngine: WorldModelEngine?,
     worldModelContradictionChecker: WorldModelContradictionChecker?,
-    emit: FlowCollector<ReasoningOutput>
+    emit.emit: FlowCollector<ReasoningOutput>
 ) {
-        
+    
     // ═══ PHASE 0a: WORLD MODEL — snapshot before generation (section 3.5) ═══
     // Pull the agent's current beliefs relevant to this query and inject them
     // into the prompt context. The LLM reasons OVER the world model, not in
@@ -106,7 +108,7 @@ private suspend fun processReasoningInternal(
         val snapshot = wmq.snapshot(query)
         if (snapshot.isNotBlank()) {
             worldModelSnapshot = snapshot
-            emit(ReasoningOutput.WorldModelContext(
+            emit.emit(ReasoningOutput.WorldModelContext(
                 entityCount = snapshot.count { it == '\n' },
                 summary = snapshot.lineSequence().firstOrNull() ?: ""
             ))
@@ -129,7 +131,7 @@ private suspend fun processReasoningInternal(
         surpriseScore = surprise.surpriseScore
         if (coder.shouldTriggerDeepReasoning(surpriseScore)) {
             // High surprise — the agent didn't expect this. Pay more attention.
-            emit(ReasoningOutput.PredictionResult(surprise.expectedTopic, 1f - surpriseScore, true))
+            emit.emit(ReasoningOutput.PredictionResult(surprise.expectedTopic, 1f - surpriseScore, true))
         }
     }
 
@@ -139,22 +141,22 @@ private suspend fun processReasoningInternal(
     system1Cache?.let { cache ->
         val fastResult = cache.tryFastPath(query)
         if (fastResult is System1Result.Hit) {
-            emit(ReasoningOutput.System1Hit(fastResult.answer, fastResult.similarity))
+            emit.emit(ReasoningOutput.System1Hit(fastResult.answer, fastResult.similarity))
             // System 1 hit — but still do post-verification for safety
             val interactionId = contextManager.recordInteraction(query, ReasoningMode.DIRECT)
-            emit(ReasoningOutput.Chunk(fastResult.answer))
+            emit.emit(ReasoningOutput.Chunk(fastResult.answer))
             // Still verify and check consistency
             val (confidence, verified) = selfConsistencyCheck(llm, query, fastResult.answer) { emit(it) }
             constraintChecker?.let { checker ->
                 val verification = checker.verifyAnswer(llm, fastResult.answer, query)
                 if (!verification.verified) {
                     verification.contradictions.forEach { c ->
-                        emit(ReasoningOutput.ConstraintViolation(c.factText, c.answerClaim, c.severity))
+                        emit.emit(ReasoningOutput.ConstraintViolation(c.factText, c.answerClaim, c.severity))
                     }
                 }
             }
             cache.cacheAnswer(query, fastResult.answer, confidence, ReasoningMode.DIRECT)
-            emit(ReasoningOutput.Done(interactionId, ReasoningMode.DIRECT, confidence))
+            emit.emit(ReasoningOutput.Done(interactionId, ReasoningMode.DIRECT, confidence))
             return@flow
         }
     }
@@ -175,12 +177,12 @@ private suspend fun processReasoningInternal(
                     if (chunk is LlmStreamResult.Token) {
                         finalAnswer.append(chunk.text)
                         accumulated.append(chunk.text)
-                        emit(ReasoningOutput.Chunk(chunk.text))
+                        emit.emit(ReasoningOutput.Chunk(chunk.text))
                         // Metacognitive monitoring during streaming
                         metacognitiveMonitor?.let { monitor ->
                             val issue = monitor.analyzeChunk(chunk.text, accumulated.toString(), interactionId)
                             if (issue != null && issue.severity > 0.7f) {
-                                emit(ReasoningOutput.MetacognitiveAlert(issue.issueType, issue.description, issue.severity))
+                                emit.emit(ReasoningOutput.MetacognitiveAlert(issue.issueType, issue.description, issue.severity))
                             }
                         }
                     }
@@ -195,11 +197,11 @@ private suspend fun processReasoningInternal(
                     if (chunk is LlmStreamResult.Token) {
                         finalAnswer.append(chunk.text)
                         accumulated.append(chunk.text)
-                        emit(ReasoningOutput.Chunk(chunk.text))
+                        emit.emit(ReasoningOutput.Chunk(chunk.text))
                         metacognitiveMonitor?.let { monitor ->
                             val issue = monitor.analyzeChunk(chunk.text, accumulated.toString(), interactionId)
                             if (issue != null && issue.severity > 0.7f) {
-                                emit(ReasoningOutput.MetacognitiveAlert(issue.issueType, issue.description, issue.severity))
+                                emit.emit(ReasoningOutput.MetacognitiveAlert(issue.issueType, issue.description, issue.severity))
                             }
                         }
                     }
@@ -214,15 +216,15 @@ private suspend fun processReasoningInternal(
                     .collect { chunk ->
                         if (chunk is LlmStreamResult.Token) {
                             finalAnswer.append(chunk.text)
-                            emit(ReasoningOutput.Chunk(chunk.text))
+                            emit.emit(ReasoningOutput.Chunk(chunk.text))
                         }
                     }
-                emit(ReasoningOutput.Done(interactionId, mode))
+                emit.emit(ReasoningOutput.Done(interactionId, mode))
                 return@flow
             }
             val subResults = mutableMapOf<String, String>()
             for (sub in subProblems) {
-                emit(ReasoningOutput.SubTaskStarted(sub))
+                emit.emit(ReasoningOutput.SubTaskStarted(sub))
                 val subPrompt = buildSubProblemPrompt(sub, query)
                 val result = StringBuilder()
                 llm.generateStreamFlow(subPrompt, generationConfig(thinking = true))
@@ -230,7 +232,7 @@ private suspend fun processReasoningInternal(
                         if (chunk is LlmStreamResult.Token) {
                             result.append(chunk.text)
                             finalAnswer.append(chunk.text)
-                            emit(ReasoningOutput.Chunk(chunk.text))
+                            emit.emit(ReasoningOutput.Chunk(chunk.text))
                         }
                     }
                 subResults[sub] = result.toString()
@@ -241,7 +243,7 @@ private suspend fun processReasoningInternal(
                 .collect { chunk ->
                     if (chunk is LlmStreamResult.Token) {
                         finalAnswer.append(chunk.text)
-                        emit(ReasoningOutput.Chunk(chunk.text))
+                        emit.emit(ReasoningOutput.Chunk(chunk.text))
                     }
                 }
         }
@@ -253,12 +255,12 @@ private suspend fun processReasoningInternal(
                 .collect { chunk ->
                     if (chunk is LlmStreamResult.Token) {
                         initialAnswer.append(chunk.text)
-                        emit(ReasoningOutput.Chunk(chunk.text))
+                        emit.emit(ReasoningOutput.Chunk(chunk.text))
                     }
                 }
             val critique = critique(llm, query, initialAnswer.toString())
             if (critique.hasIssues) {
-                emit(ReasoningOutput.RefinementBoundary)
+                emit.emit(ReasoningOutput.RefinementBoundary)
                 val refinedPrompt = buildRefinementPrompt(
                     query, initialAnswer.toString(), critique.notes
                 )
@@ -267,7 +269,7 @@ private suspend fun processReasoningInternal(
                     .collect { chunk ->
                         if (chunk is LlmStreamResult.Token) {
                             finalAnswer.append(chunk.text)
-                            emit(ReasoningOutput.Chunk(chunk.text))
+                            emit.emit(ReasoningOutput.Chunk(chunk.text))
                         }
                     }
             } else {
@@ -283,11 +285,11 @@ private suspend fun processReasoningInternal(
                                          "trade-offs", "what if", "recommend", "advise")
             if (debatePatterns.any { lower.contains(it) }) {
                 // Use Internal Debate — multi-perspective argumentation
-                emit(ReasoningOutput.DebateStarted(listOf("SKEPTIC", "OPTIMIST", "PRAGMATIST")))
+                emit.emit(ReasoningOutput.DebateStarted(listOf("SKEPTIC", "OPTIMIST", "PRAGMATIST")))
                 val context = buildPrompt(contextManager, memorySystem, query, worldModelSnapshot)
                 val debateResult = InternalDebate.conductDebate(llm, query, context) { emit(it) }
                 finalAnswer = StringBuilder(debateResult.finalAnswer)
-                emit(ReasoningOutput.DebateConsensus(debateResult.consensusLevel, debateResult.judgeNotes))
+                emit.emit(ReasoningOutput.DebateConsensus(debateResult.consensusLevel, debateResult.judgeNotes))
                 // Factor debate consensus into confidence
                 finalConfidence = debateResult.consensusLevel
             } else {
@@ -301,12 +303,12 @@ private suspend fun processReasoningInternal(
     // ═══ PHASE 3: SELF-CONSISTENCY CHECK ═══
     val (confidence, verified) = selfConsistencyCheck(
         llm, query, finalAnswer.toString()
-    ) { emit(it) }
+    ) { emit.emit(it) }
     finalConfidence = confidence
 
     // If verification fails, trigger a reflective refinement
     if (!verified && mode != ReasoningMode.REFLECTIVE) {
-        emit(ReasoningOutput.RefinementBoundary)
+        emit.emit(ReasoningOutput.RefinementBoundary)
         val critique = critique(llm, query, finalAnswer.toString())
         if (critique.hasIssues) {
             finalAnswer.clear()
@@ -317,13 +319,13 @@ private suspend fun processReasoningInternal(
                 .collect { chunk ->
                     if (chunk is LlmStreamResult.Token) {
                         finalAnswer.append(chunk.text)
-                        emit(ReasoningOutput.Chunk(chunk.text))
+                        emit.emit(ReasoningOutput.Chunk(chunk.text))
                     }
                 }
             // Re-check confidence after refinement
             val (refinedConfidence, refinedVerified) = selfConsistencyCheck(
                 llm, query, finalAnswer.toString()
-            ) { emit(it) }
+            ) { emit.emit(it) }
             finalConfidence = refinedConfidence
         }
     }
@@ -335,7 +337,7 @@ private suspend fun processReasoningInternal(
         val verification = checker.verifyAnswer(llm, finalAnswer.toString(), query)
         if (!verification.verified) {
             verification.contradictions.forEach { c ->
-                emit(ReasoningOutput.ConstraintViolation(c.factText, c.answerClaim, c.severity))
+                emit.emit(ReasoningOutput.ConstraintViolation(c.factText, c.answerClaim, c.severity))
                 // Reduce confidence for each contradiction found
                 finalConfidence = (finalConfidence - c.severity * 0.2f).coerceAtLeast(0f)
             }
@@ -352,7 +354,7 @@ private suspend fun processReasoningInternal(
     worldModelContradictionChecker?.let { checker ->
         val wmContradictions = checker.check(finalAnswer.toString())
         wmContradictions.forEach { c ->
-            emit(ReasoningOutput.ConstraintViolation(c.beliefFact, c.answerClaim, c.severity))
+            emit.emit(ReasoningOutput.ConstraintViolation(c.beliefFact, c.answerClaim, c.severity))
             // World-model contradictions are weighted harder: they're the agent
             // disagreeing with itself, not just an external fact mismatch.
             finalConfidence = (finalConfidence - c.severity * 0.25f).coerceAtLeast(0f)
@@ -364,7 +366,7 @@ private suspend fun processReasoningInternal(
     metacognitiveMonitor?.let { monitor ->
         val issues = monitor.finalReview(finalAnswer.toString(), query, interactionId)
         issues.filter { it.severity > 0.5f }.forEach { issue ->
-            emit(ReasoningOutput.MetacognitiveAlert(issue.issueType, issue.description, issue.severity))
+            emit.emit(ReasoningOutput.MetacognitiveAlert(issue.issueType, issue.description, issue.severity))
             finalConfidence = (finalConfidence - issue.severity * 0.1f).coerceAtLeast(0f)
         }
     }
@@ -379,7 +381,7 @@ private suspend fun processReasoningInternal(
     if (finalConfidence < 0.4f) {
         val topic = query.split(" ").filter { it.length > 4 }.take(3).joinToString(" ")
         if (topic.isNotBlank()) {
-            emit(ReasoningOutput.KnowledgeGapAlert(
+            emit.emit(ReasoningOutput.KnowledgeGapAlert(
                 topic, "LOW_CONFIDENCE",
                 "I'm not confident about this topic. I should learn more."
             ))
@@ -387,6 +389,7 @@ private suspend fun processReasoningInternal(
     }
 
         // ═══ PHASE 8: WORLD MODEL UPDATE (section 3.5) ═══
+    worl    // PHASE 8: WORLD MODEL UPDATE
     worldModelEngine?.let { engine ->
         val results = engine.ingestExchange(
             userQuery = query,
@@ -397,15 +400,11 @@ private suspend fun processReasoningInternal(
         val totalRelations = results.sumOf { it.relationsTouched.size }
         val totalRevisions = results.sumOf { it.revisions.size }
         if (totalEntities + totalRelations + totalRevisions > 0) {
-            emit(ReasoningOutput.WorldModelUpdated(totalEntities, totalRelations, totalRevisions))
+            emit.emit(ReasoningOutput.WorldModelUpdated(totalEntities, totalRelations, totalRevisions))
         }
     }
 
-        timeoutJob.cancel()   // important
-        emit(ReasoningOutput.Done(interactionId, mode, finalConfidence))
-    } finally {
-        timeoutJob.cancel()
-    }
+    emit.emit(ReasoningOutput.Done(interactionId, mode, finalConfidence))
 }
 
 private suspend fun classifyQuery(llm: LlmWrapper, query: String): ReasoningMode {
@@ -576,7 +575,7 @@ private suspend fun treeOfThoughts(
     contextManager: ContextManager,
     memorySystem: MemorySystem,
     query: String,
-    emit: suspend (ReasoningOutput) -> Unit,
+    emit.emit: suspend (ReasoningOutput) -> Unit,
     worldModelContext: String = ""
 ): String {
     val prompt = buildPrompt(contextManager, memorySystem, query, worldModelContext)
@@ -585,7 +584,7 @@ private suspend fun treeOfThoughts(
 
     // Generate branches in parallel using different temperature/seed approaches
     for (i in 0 until branchCount) {
-        emit(ReasoningOutput.BranchStarted(i, "Exploring approach ${i + 1}"))
+        emit.emit(ReasoningOutput.BranchStarted(i, "Exploring approach ${i + 1}"))
         val branchResult = StringBuilder()
         val config = GenerationConfig(maxTokens = 2048)
         llm.generateStreamFlow("$prompt\n\nApproach this from a different angle. Attempt ${i + 1}.", config)
@@ -599,7 +598,7 @@ private suspend fun treeOfThoughts(
     // Score each branch
     val scored = branches.mapIndexed { index, answer ->
         val score = scoreAnswer(llm, query, answer)
-        emit(ReasoningOutput.BranchScored(index, score.score, score.reason))
+        emit.emit(ReasoningOutput.BranchScored(index, score.score, score.reason))
         Triple(index, answer, score)
     }.sortedByDescending { it.third.score }
 
@@ -608,7 +607,7 @@ private suspend fun treeOfThoughts(
 
     // If top branches strongly disagree, merge the best two
     if (scored.size >= 2 && best.third.score - worst.third.score < 0.3f) {
-        emit(ReasoningOutput.BranchStarted(99, "Merging top approaches for a stronger answer"))
+        emit.emit(ReasoningOutput.BranchStarted(99, "Merging top approaches for a stronger answer"))
         val mergePrompt = """
             Two approaches were attempted for: "$query"
             Approach A: "${best.second.take(500)}"
@@ -620,7 +619,7 @@ private suspend fun treeOfThoughts(
             .collect { chunk ->
                 if (chunk is LlmStreamResult.Token) {
                     merged.append(chunk.text)
-                    emit(ReasoningOutput.Chunk(chunk.text))
+                    emit.emit(ReasoningOutput.Chunk(chunk.text))
                 }
             }
         return merged.toString()
@@ -662,7 +661,7 @@ private suspend fun selfConsistencyCheck(
     llm: LlmWrapper,
     query: String,
     answer: String,
-    emit: suspend (ReasoningOutput) -> Unit
+    emit.emit: suspend (ReasoningOutput) -> Unit
 ): Pair<Float, Boolean> {
     val verifyPrompt = """
         You are verifying an answer independently.
@@ -686,7 +685,7 @@ private suspend fun selfConsistencyCheck(
     val issues = issuesMatch?.groupValues?.get(1)
     val verified = isCorrect && confidence >= 0.7f
 
-    emit(ReasoningOutput.ConfidenceCheck(confidence, verified, issues))
+    emit.emit(ReasoningOutput.ConfidenceCheck(confidence, verified, issues))
 
     return Pair(confidence, verified)
 }
