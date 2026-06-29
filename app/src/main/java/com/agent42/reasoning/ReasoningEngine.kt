@@ -157,7 +157,7 @@ private suspend fun processReasoningInternal(
             }
             cache.cacheAnswer(query, fastResult.answer, confidence, ReasoningMode.DIRECT)
             emit.emit(ReasoningOutput.Done(interactionId, ReasoningMode.DIRECT, confidence))
-            return@flow
+            return
         }
     }
 
