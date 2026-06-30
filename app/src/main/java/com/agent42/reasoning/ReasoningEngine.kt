@@ -69,24 +69,25 @@ fun processReasoning(
     worldModelQuery: WorldModelQuery? = null,
     worldModelEngine: WorldModelEngine? = null,
     worldModelContradictionChecker: WorldModelContradictionChecker? = null
-): Flow<ReasoningOutput> = flow {
-    val timeoutJob = launch {
-        delay(45_000L)
-        emit(ReasoningOutput.Done(0L, ReasoningMode.CHAIN_OF_THOUGHT, 0.6f))
-    }
+): Flow<ReasoningOutput> = flow {    
+    coroutineScope {
+        val timeoutJob = launch {
+            delay(45_000L)
+            emit(ReasoningOutput.Done(0L, ReasoningMode.CHAIN_OF_THOUGHT, 0.6f))
+        }
 
-    try {
-        processReasoningInternal(
-            llm, contextManager, memorySystem, query,
-            system1Cache, metacognitiveMonitor, constraintChecker,
-            predictiveCoder, worldModelQuery, worldModelEngine,
-            worldModelContradictionChecker, this  // this is the FlowCollector
-        )
-    } finally {
-        timeoutJob.cancel()
+        try {
+            processReasoningInternal(
+                llm, contextManager, memorySystem, query,
+                system1Cache, metacognitiveMonitor, constraintChecker,
+                predictiveCoder, worldModelQuery, worldModelEngine,
+                worldModelContradictionChecker, this@flow  // pass the collector
+            )
+        } finally {
+            timeoutJob.cancel()
+        }
     }
 }
-
 private suspend fun processReasoningInternal(
     llm: LlmWrapper,
     contextManager: ContextManager,
