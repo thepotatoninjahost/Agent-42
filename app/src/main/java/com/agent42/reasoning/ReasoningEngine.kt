@@ -86,7 +86,7 @@ fun processReasoning(
         timeoutJob.cancel()
     }
 }
-}
+
 private suspend fun processReasoningInternal(
     llm: LlmWrapper,
     contextManager: ContextManager,
