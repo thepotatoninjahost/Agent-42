@@ -90,6 +90,22 @@ class AgentViewModel(
 
     private val isProcessing = java.util.concurrent.atomic.AtomicBoolean(false)
 
+    /**
+     * The active reasoning job, if any. Held so the owner can cancel a
+     * runaway response via STOP NOW (Rule 7). Null when idle.
+     */
+    private var reasoningJob: kotlinx.coroutines.Job? = null
+
+    /**
+     * STOP NOW (Rule 7) — cancel any in-flight reasoning so the owner can
+     * interrupt an agent that won't stop. The reasoning flow's
+     * CancellationException path finalizes the partial message and releases
+     * the isProcessing lock. Safe to call when idle (no-op).
+     */
+    fun cancelReasoning() {
+        reasoningJob?.cancel()
+    }
+
     init {
         viewModelScope.launch {
             approvalGate.loadDecisionHistory()
@@ -112,7 +128,7 @@ class AgentViewModel(
 
     fun sendQuery(query: String) {
         if (!isProcessing.compareAndSet(false, true)) return
-        viewModelScope.launch {
+        reasoningJob = viewModelScope.launch {
             _isThinking.value = true
             _currentTrace.value = null
             _messages.value = _messages.value + ChatMessage(
@@ -253,7 +269,23 @@ class AgentViewModel(
                     }
                     refreshData()
                 }
-            } catch (e: CancellationException) { throw e }
+            } catch (e: CancellationException) {
+                // STOP NOW (owner cancelled). Finalize the partial assistant
+                // message instead of leaving it in isStreaming=true forever.
+                // (The generic Exception branch below is skipped because we
+                // re-throw, so we handle UI cleanup here.)
+                _messages.value = _messages.value.map { msg ->
+                    if (msg.id == assistantId) {
+                        val partial = responseBuilder.toString().trim()
+                        msg.copy(
+                            content = if (partial.isEmpty()) "_(stopped)_" else "$partial\n\n_(stopped by owner)_",
+                            isStreaming = false,
+                            isError = false
+                        )
+                    } else msg
+                }
+                throw e
+            }
             catch (e: Exception) {
                 _messages.value = _messages.value.map { msg ->
                     if (msg.id == assistantId) msg.copy(
@@ -264,6 +296,7 @@ class AgentViewModel(
                 _isThinking.value = false
                 _currentTrace.value = null
                 isProcessing.set(false)
+                reasoningJob = null
             }
         }
     }

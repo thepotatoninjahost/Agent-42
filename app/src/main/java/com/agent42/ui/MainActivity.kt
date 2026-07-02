@@ -275,7 +275,12 @@ fun AgentApp(
                         )
                     }
                     IconButton(onClick = {
-                        // Rule 7: STOP NOW — halts all pending actions immediately
+                        // Rule 7: STOP NOW.
+                        // 1. Cancel any in-flight reasoning so the owner can
+                        //    interrupt an agent that won't stop responding.
+                        // 2. Then halt pending action approvals (the original
+                        //    Rule 7 semantics for action execution).
+                        viewModel?.cancelReasoning()
                         deps.constitutionEnforcer.stopNow()
                     }) {
                         Icon(
