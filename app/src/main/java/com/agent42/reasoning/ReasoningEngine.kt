@@ -66,7 +66,8 @@ fun processReasoning(
     predictiveCoder: PredictiveCoder? = null,
     worldModelQuery: WorldModelQuery? = null,
     worldModelEngine: WorldModelEngine? = null,
-    worldModelContradictionChecker: WorldModelContradictionChecker? = null
+    worldModelContradictionChecker: WorldModelContradictionChecker? = null,
+    executiveController: com.agent42.cognition.ExecutiveController? = null
 ): Flow<ReasoningOutput> = flow {
 
     // ═══ PHASE 0a: WORLD MODEL — snapshot before generation (section 3.5) ═══
@@ -276,33 +277,91 @@ fun processReasoning(
     ) { emit(it) }
     finalConfidence = confidence
 
-    // If verification fails, trigger a reflective refinement
+    // If verification fails, trigger a reflective refinement — UNLESS the
+    // Foreman decides the answer is already on-topic and substantial, in which
+    // case we RESPOND instead of burning 3 more passes (critique + refine +
+    // re-check). This is the executive gate that stops "restarts and keeps
+    // going": the unreliable verbalized `!verified` signal no longer forces a
+    // re-derivation when the answer is genuinely fine.
     if (!verified && mode != ReasoningMode.REFLECTIVE) {
-        emit(ReasoningOutput.RefinementBoundary)
-        val critique = critique(llm, query, finalAnswer.toString())
-        if (critique.hasIssues) {
-            // Capture the answer BEFORE clearing, then pass the captured value.
-            // Previously this cleared finalAnswer first and then passed
-            // finalAnswer.toString() (now empty) to buildRefinementPrompt — so
-            // refinement received `Initial answer: ""` and re-derived everything
-            // from scratch (the "finds the answer then restarts" symptom).
-            val originalAnswer = finalAnswer.toString()
-            finalAnswer.clear()
-            val refinedPrompt = buildRefinementPrompt(
-                query, originalAnswer, critique.notes
-            )
-            llm.generateStreamFlow(refinedPrompt, generationConfig(thinking = false))
-                .collect { chunk ->
-                    if (chunk is LlmStreamResult.Token) {
-                        finalAnswer.append(chunk.text)
-                        emit(ReasoningOutput.Chunk(chunk.text))
+        val foreman = executiveController
+        if (foreman != null) {
+            val decision = foreman.decide(query, finalAnswer.toString(), passCount = 0)
+            when (decision) {
+                is com.agent42.cognition.ForemanDecision.Respond -> {
+                    // Answer is on-topic and substantial — skip refinement,
+                    // keep finalConfidence as-is, fall through to emit Done.
+                }
+                is com.agent42.cognition.ForemanDecision.Refocus -> {
+                    emit(ReasoningOutput.MetacognitiveAlert("REFOCUS", decision.reason, 0.6f))
+                    val critique = critique(llm, query, finalAnswer.toString())
+                    if (critique.hasIssues) {
+                        val originalAnswer = finalAnswer.toString()
+                        finalAnswer.clear()
+                        val refocusPrompt = buildRefinementPrompt(
+                            query, originalAnswer, "Stay on-topic: ${decision.reason}"
+                        )
+                        llm.generateStreamFlow(refocusPrompt, generationConfig(thinking = false))
+                            .collect { chunk ->
+                                if (chunk is LlmStreamResult.Token) {
+                                    finalAnswer.append(chunk.text)
+                                    emit(ReasoningOutput.Chunk(chunk.text))
+                                }
+                            }
                     }
                 }
-            // Re-check confidence after refinement
-            val (refinedConfidence, refinedVerified) = selfConsistencyCheck(
-                llm, query, finalAnswer.toString()
-            ) { emit(it) }
-            finalConfidence = refinedConfidence
+                is com.agent42.cognition.ForemanDecision.Continue -> {
+                    emit(ReasoningOutput.RefinementBoundary)
+                    val critique = critique(llm, query, finalAnswer.toString())
+                    if (critique.hasIssues) {
+                        // Capture the answer BEFORE clearing, then pass the captured value.
+                        // Previously this cleared finalAnswer first and then passed
+                        // finalAnswer.toString() (now empty) to buildRefinementPrompt — so
+                        // refinement received `Initial answer: ""` and re-derived everything
+                        // from scratch (the "finds the answer then restarts" symptom).
+                        val originalAnswer = finalAnswer.toString()
+                        finalAnswer.clear()
+                        val refinedPrompt = buildRefinementPrompt(
+                            query, originalAnswer, critique.notes
+                        )
+                        llm.generateStreamFlow(refinedPrompt, generationConfig(thinking = false))
+                            .collect { chunk ->
+                                if (chunk is LlmStreamResult.Token) {
+                                    finalAnswer.append(chunk.text)
+                                    emit(ReasoningOutput.Chunk(chunk.text))
+                                }
+                            }
+                        // Re-check confidence after refinement
+                        val (refinedConfidence, refinedVerified) = selfConsistencyCheck(
+                            llm, query, finalAnswer.toString()
+                        ) { emit(it) }
+                        finalConfidence = refinedConfidence
+                    }
+                }
+            }
+        } else {
+            // No Foreman wired — preserve original behavior.
+            emit(ReasoningOutput.RefinementBoundary)
+            val critique = critique(llm, query, finalAnswer.toString())
+            if (critique.hasIssues) {
+                val originalAnswer = finalAnswer.toString()
+                finalAnswer.clear()
+                val refinedPrompt = buildRefinementPrompt(
+                    query, originalAnswer, critique.notes
+                )
+                llm.generateStreamFlow(refinedPrompt, generationConfig(thinking = false))
+                    .collect { chunk ->
+                        if (chunk is LlmStreamResult.Token) {
+                            finalAnswer.append(chunk.text)
+                            emit(ReasoningOutput.Chunk(chunk.text))
+                        }
+                    }
+                // Re-check confidence after refinement
+                val (refinedConfidence, refinedVerified) = selfConsistencyCheck(
+                    llm, query, finalAnswer.toString()
+                ) { emit(it) }
+                finalConfidence = refinedConfidence
+            }
         }
     }
 

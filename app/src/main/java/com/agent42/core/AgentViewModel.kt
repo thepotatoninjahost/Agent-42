@@ -151,6 +151,7 @@ class AgentViewModel(
                     sensor.captureSnapshot(contextManager.sessionId)
                     contextManager.sensorContext = sensor.getContextString()
                 }
+                val foreman = com.agent42.cognition.ExecutiveController { llm }
                 processReasoning(
                     llm, contextManager, memorySystem, query,
                     system1Cache = system1Cache,
@@ -159,7 +160,8 @@ class AgentViewModel(
                     predictiveCoder = predictiveCoder,
                     worldModelQuery = worldModelQuery,
                     worldModelEngine = worldModelEngine,
-                    worldModelContradictionChecker = worldModelContradictionChecker
+                    worldModelContradictionChecker = worldModelContradictionChecker,
+                    executiveController = foreman
                 ).collect { output ->
                     when (output) {
                         is ReasoningOutput.Chunk -> {
