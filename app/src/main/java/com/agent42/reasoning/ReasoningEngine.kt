@@ -281,9 +281,15 @@ fun processReasoning(
         emit(ReasoningOutput.RefinementBoundary)
         val critique = critique(llm, query, finalAnswer.toString())
         if (critique.hasIssues) {
+            // Capture the answer BEFORE clearing, then pass the captured value.
+            // Previously this cleared finalAnswer first and then passed
+            // finalAnswer.toString() (now empty) to buildRefinementPrompt — so
+            // refinement received `Initial answer: ""` and re-derived everything
+            // from scratch (the "finds the answer then restarts" symptom).
+            val originalAnswer = finalAnswer.toString()
             finalAnswer.clear()
             val refinedPrompt = buildRefinementPrompt(
-                query, finalAnswer.toString(), critique.notes
+                query, originalAnswer, critique.notes
             )
             llm.generateStreamFlow(refinedPrompt, generationConfig(thinking = false))
                 .collect { chunk ->
